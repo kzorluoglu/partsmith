@@ -6,7 +6,7 @@ import { STARTER } from '../lib/examples.js'
 import { emit } from '../lib/bus.js'
 import settings from './settings-store.js'
 
-const CODE_STORAGE = 'printforge.code'
+const CODE_STORAGE = 'partsmith.code'
 
 const loadCode = () => {
   try {

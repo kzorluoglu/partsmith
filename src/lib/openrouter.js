@@ -6,7 +6,7 @@
  */
 
 const BASE = 'https://openrouter.ai/api/v1'
-const KEY_STORAGE = 'printforge.openrouter.key'
+const KEY_STORAGE = 'partsmith.openrouter.key'
 
 export const getApiKey = () => {
   try {
@@ -29,7 +29,7 @@ const headers = (key) => ({
   Authorization: `Bearer ${key}`,
   'Content-Type': 'application/json',
   'HTTP-Referer': location.origin,
-  'X-Title': 'PrintForge'
+  'X-Title': 'PartSmith'
 })
 
 const readError = async (response) => {

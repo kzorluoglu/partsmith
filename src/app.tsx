@@ -15,7 +15,7 @@ export default class App extends Component {
     return (
       <div class="app">
         <header class="topbar">
-          <span class="brand">PrintForge</span>
+          <span class="brand">PartSmith</span>
           <input
             class="name-input"
             value={model.name}

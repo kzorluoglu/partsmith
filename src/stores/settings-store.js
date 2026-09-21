@@ -1,7 +1,7 @@
 import { Store } from '@geajs/core'
 import { PRINTERS, MATERIALS } from '../lib/print.js'
 
-const STORAGE = 'printforge.settings'
+const STORAGE = 'partsmith.settings'
 
 const load = () => {
   try {

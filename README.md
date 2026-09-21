@@ -1,12 +1,36 @@
-# PrintForge
+# PartSmith
 
-Browser only 3D viewer and parametric modeller for 3D printing. You describe a part in
-plain words, an OpenRouter model answers with a parametric [JSCAD](https://openjscad.xyz)
-script, the script is evaluated in a worker and the resulting solid is shown, measured,
-checked for printability and exported as STL or 3MF.
+**Describe a part in plain words, get a printable STL.** Entirely in your browser.
 
-No backend. No build step at runtime. The OpenRouter key lives in `localStorage` and the
-browser talks to `openrouter.ai` directly.
+[**Live demo**](https://kzorluoglu.github.io/partsmith/) · no signup, bring your own
+[OpenRouter](https://openrouter.ai/keys) key
+
+![PartSmith](docs/demo.gif)
+
+![license](https://img.shields.io/badge/license-MIT-blue)
+![no backend](https://img.shields.io/badge/backend-none-brightgreen)
+![gea](https://img.shields.io/badge/built%20with-Gea%20%2B%20three.js-orange)
+
+Most "AI 3D" tools hand you a mesh: a blob of triangles you cannot edit, usually not
+watertight, rarely printable. PartSmith asks the model for **parametric CAD code** instead.
+You get a solid you can actually change, with sliders for every dimension, a printability
+check, and STL or 3MF export.
+
+```
+your prompt ──▶ LLM writes a JSCAD script ──▶ real solid geometry
+                                                    │
+                          sliders · print check · STL / 3MF
+```
+
+- **Editable, not frozen.** Every dimension is a parameter with a slider. Move it, the
+  model rebuilds.
+- **Printability is checked, not assumed.** Watertightness, build volume fit, overhang
+  area, wall thickness, filament weight and cost.
+- **It fixes its own mistakes.** When a generated script throws, the error goes back to the
+  model once and the corrected version is rerun.
+- **Nothing leaves your machine except the prompt.** No backend, no accounts, no telemetry.
+  Your API key stays in `localStorage`.
+- **Any model you like.** Anything OpenRouter serves, from Claude and GPT to free ones.
 
 ## Run it
 
@@ -43,6 +67,10 @@ prompt ──▶ OpenRouter (streamed) ──▶ JSCAD script
 - **`src/lib/scene.js`** — three.js: build plate, grid, build volume cage, orbit controls,
   shading modes. Deliberately plain module state, so none of it ends up inside Gea's
   reactive proxy.
+- **`src/lib/canvas2d-renderer.js`** — fallback for machines without WebGL, which on Linux
+  laptops usually means graphics acceleration is switched off. Same scene and same orbit
+  controls, but the triangles are projected, depth sorted and filled on the CPU. It only
+  redraws when something changed, so an idle view costs nothing.
 - **`src/lib/prompt.js`** — the system prompt. This is what decides whether the generated
   parts are printable: the JSCAD API the sandbox exposes, plus wall thickness, overhang,
   clearance and orientation rules.

@@ -10,7 +10,7 @@ if (!root) throw new Error('#app root element is missing')
 
 new App().render(root)
 
-// Handy in the console while working on a script: printforge.model.run() etc.
+// Handy in the console while working on a script: partsmith.model.run() etc.
 if (import.meta.env.DEV) {
-  window.printforge = { model, ai, settings, runner }
+  window.partsmith = { model, ai, settings, runner }
 }

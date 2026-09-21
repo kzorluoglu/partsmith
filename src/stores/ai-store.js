@@ -4,7 +4,7 @@ import { SYSTEM_PROMPT, contextMessage, repairMessage, extractCode } from '../li
 import settings from './settings-store.js'
 import model from './model-store.js'
 
-const MODEL_STORAGE = 'printforge.model'
+const MODEL_STORAGE = 'partsmith.model'
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5'
 
 /** Chat state and the generate / refine / repair loop. */
