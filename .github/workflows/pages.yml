@@ -28,7 +28,11 @@ jobs:
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+      # enablement turns Pages on via the API, so a fresh clone of this repo
+      # does not need anyone to flip the setting by hand first.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
