@@ -43,8 +43,6 @@ export class Canvas2DRenderer {
     this.width = 1
     this.height = 1
     this.pixelRatio = 1
-    // Shared shape with WebGLRenderer so scene.js can set these blindly.
-    this.shadowMap = { enabled: false, type: null }
     this.software = true
   }
 

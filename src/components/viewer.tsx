@@ -7,6 +7,12 @@ import settings from '../stores/settings-store.js'
 import model from '../stores/model-store.js'
 
 const VIEWS = ['iso', 'front', 'right', 'top']
+const SHADING = [
+  { id: 'cad', label: 'cad', title: 'Flat CAD shading, no shadows' },
+  { id: 'clay', label: 'clay', title: 'Warm matte clay' },
+  { id: 'orange', label: 'print', title: 'Filament orange' },
+  { id: 'normal', label: 'normal', title: 'Surface normals, useful for spotting flipped faces' }
+]
 
 /** Hosts the WebGL canvas and the overlays drawn on top of it. */
 export default class Viewer extends Component {
@@ -53,6 +59,17 @@ export default class Viewer extends Component {
           <button class={`chip ${settings.showWireframe ? 'on' : ''}`} click={() => this.toggle('showWireframe')}>edges</button>
           <button class={`chip ${settings.showAxes ? 'on' : ''}`} click={() => this.toggle('showAxes')}>axes</button>
           <button class={`chip ${settings.showSketch ? 'on' : ''}`} title="Sketch overlay, never part of the model or the export" click={() => this.toggleOverlay()}>sketch</button>
+        </div>
+
+        <div class="viewer-shading">
+          {SHADING.map((s) => (
+            <button
+              key={s.id}
+              class={`chip ${settings.shading === s.id ? 'on' : ''}`}
+              title={s.title}
+              click={() => settings.set('shading', s.id)}
+            >{s.label}</button>
+          ))}
         </div>
 
         <SketchToolbar />

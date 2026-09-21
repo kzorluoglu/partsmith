@@ -105,6 +105,17 @@ const tessellate = (solids) => {
   const planeIndex = new Map()
   const planes = []
 
+  // Feature edges for the CAD style outline. An edge is real when the two
+  // triangles sharing it meet at a sharp angle. Two extra rules matter here:
+  // an edge used only once is a T-junction left by the boolean ops (which is
+  // why EdgesGeometry draws lines across a boolean result), and the facets of
+  // a tessellated cylinder are separate planes but meet almost flat, so they
+  // must be filtered by angle or every segment line shows up.
+  const collectEdges = triangleCount <= 200000
+  const edgeUse = collectEdges ? new Map() : null
+  const SHARP_COS = Math.cos((20 * Math.PI) / 180)
+  const vkey = (v) => `${Math.round(v[0] * 1e3)},${Math.round(v[1] * 1e3)},${Math.round(v[2] * 1e3)}`
+
   // Vector area of the surface. On a closed surface it sums to zero, and
   // unlike edge matching it is not confused by the T-junctions that JSCAD's
   // boolean ops leave behind on perfectly valid solids.
@@ -153,6 +164,28 @@ const tessellate = (solids) => {
       plane.cz += area * (a[2] + b[2] + c[2]) / 3
       planeIds[tri++] = planeId
 
+      if (collectEdges) {
+        const keys = [vkey(a), vkey(b), vkey(c)]
+        const corners = [a, b, c]
+        for (let e = 0; e < 3; e++) {
+          const k1 = keys[e]
+          const k2 = keys[(e + 1) % 3]
+          const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`
+          const seen = edgeUse.get(key)
+          if (seen === undefined) {
+            edgeUse.set(key, { planeId, uses: 1, p: corners[e], q: corners[(e + 1) % 3] })
+          } else {
+            seen.uses++
+            if (seen.planeId !== planeId) {
+              const n1 = planes[seen.planeId].normal
+              const n2 = planes[planeId].normal
+              const dot = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]
+              if (dot < SHARP_COS) seen.sharp = true
+            }
+          }
+        }
+      }
+
       // Signed tetrahedron volume against the origin.
       volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) -
                  a[1] * (b[0] * c[2] - b[2] * c[0]) +
@@ -177,6 +210,16 @@ const tessellate = (solids) => {
   const overhangArea = downFaces.reduce((sum, f) => (f.z > plateZ ? sum + f.area : sum), 0)
 
   const empty = triangleCount === 0
+  let edgePositions = new Float32Array(0)
+  if (collectEdges) {
+    const out = []
+    for (const [, edge] of edgeUse) {
+      if (edge.uses !== 2 || !edge.sharp) continue
+      out.push(edge.p[0], edge.p[1], edge.p[2], edge.q[0], edge.q[1], edge.q[2])
+    }
+    edgePositions = new Float32Array(out)
+  }
+
   for (const plane of planes) {
     if (plane.area > 0) {
       plane.centroid = [plane.cx / plane.area, plane.cy / plane.area, plane.cz / plane.area]
@@ -191,6 +234,7 @@ const tessellate = (solids) => {
     normals,
     planeIds,
     planes,
+    edgePositions,
     stats: {
       empty,
       triangles: triangleCount,
@@ -281,6 +325,7 @@ const run = ({ code, params, autoPlace = true, features = [] }) => {
     normals: mesh.normals,
     planeIds: mesh.planeIds,
     planes: mesh.planes,
+    edgePositions: mesh.edgePositions,
     stats: { ...mesh.stats, duration: Math.round(performance.now() - started) },
     paramDefs: defs,
     paramValues: values
@@ -306,7 +351,9 @@ self.onmessage = (event) => {
   try {
     if (type === 'run') {
       const result = run(payload)
-      self.postMessage({ id, ok: true, result }, [result.positions.buffer, result.normals.buffer, result.planeIds.buffer])
+      self.postMessage({ id, ok: true, result }, [
+        result.positions.buffer, result.normals.buffer, result.planeIds.buffer, result.edgePositions.buffer
+      ])
       return
     }
     if (type === 'export') {

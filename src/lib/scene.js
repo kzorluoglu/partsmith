@@ -44,8 +44,6 @@ const createRenderer = (canvas) => {
   try {
     const gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
     gl.setPixelRatio(Math.min(devicePixelRatio, 2))
-    gl.shadowMap.enabled = true
-    gl.shadowMap.type = THREE.PCFSoftShadowMap
     software = false
     return gl
   } catch {
@@ -56,16 +54,19 @@ const createRenderer = (canvas) => {
   }
 }
 
+const MATERIAL_COLORS = { cad: 0xc9d1dc, clay: 0xd9d4cc, orange: 0xf5a524 }
+
+/**
+ * CAD viewers do not light a part like a product render. No shadows, no
+ * specular hotspots, just enough gradient to read the form, so that every
+ * face stays legible and equal lengths look equal.
+ */
 const makeMaterial = (shading) => {
   if (shading === 'normal') return new THREE.MeshNormalMaterial({ flatShading: true })
-  if (shading === 'clay') {
-    return new THREE.MeshStandardMaterial({ color: 0xd9d4cc, roughness: 0.95, metalness: 0, flatShading: false })
-  }
-  return new THREE.MeshStandardMaterial({
-    color: 0xf5a524,
-    roughness: 0.42,
-    metalness: 0.12,
-    envMapIntensity: 0.6
+  return new THREE.MeshLambertMaterial({
+    color: MATERIAL_COLORS[shading] ?? MATERIAL_COLORS.cad,
+    emissive: 0x0d1016,
+    emissiveIntensity: 1
   })
 }
 
@@ -75,7 +76,6 @@ export const initScene = (canvas) => {
 
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x14161c)
-  scene.fog = new THREE.Fog(0x14161c, 600, 1600)
 
   perspCamera = new THREE.PerspectiveCamera(42, 1, 1, 4000)
   perspCamera.up.set(0, 0, 1)
@@ -94,19 +94,21 @@ export const initScene = (canvas) => {
   controls.maxPolarAngle = Math.PI * 0.98
   controls.target.set(0, 0, 30)
 
-  const key = new THREE.DirectionalLight(0xffffff, 2.2)
-  key.position.set(120, -160, 240)
-  key.castShadow = true
-  key.shadow.mapSize.set(2048, 2048)
-  key.shadow.camera.near = 10
-  key.shadow.camera.far = 900
-  const span = 260
-  Object.assign(key.shadow.camera, { left: -span, right: span, top: span, bottom: -span })
-  key.shadow.bias = -0.0008
+  // Three soft lights from different sides plus ambient: no face goes black,
+  // nothing blows out, and there is not a single shadow caster in the scene.
+  const key = new THREE.DirectionalLight(0xffffff, 1.5)
+  key.position.set(120, -180, 220)
   scene.add(key)
 
-  scene.add(new THREE.DirectionalLight(0x90a8ff, 0.5).translateX(-200))
-  scene.add(new THREE.HemisphereLight(0xaac4ff, 0x20232c, 1.1))
+  const fill = new THREE.DirectionalLight(0xdfe7f5, 0.9)
+  fill.position.set(-180, 120, 90)
+  scene.add(fill)
+
+  const rim = new THREE.DirectionalLight(0xffffff, 0.5)
+  rim.position.set(60, 200, -140)
+  scene.add(rim)
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55))
 
   modelGroup = new THREE.Group()
   scene.add(modelGroup)
@@ -200,9 +202,8 @@ export const buildPlate = ([x, y, z]) => {
 
   plate = new THREE.Mesh(
     new THREE.PlaneGeometry(x, y),
-    new THREE.MeshStandardMaterial({ color: 0x1b1f28, roughness: 1, metalness: 0 })
+    new THREE.MeshBasicMaterial({ color: 0x191d25 })
   )
-  plate.receiveShadow = true
   plate.position.z = -0.05
   scene.add(plate)
 
@@ -246,14 +247,17 @@ export const setGeometry = (payload, { shading = 'matcap', showWireframe = false
 
   meshMaterial = makeMaterial(shading)
   mesh = new THREE.Mesh(geometry, meshMaterial)
-  mesh.castShadow = true
-  mesh.receiveShadow = true
   modelGroup.add(mesh)
 
-  const edges = new THREE.EdgesGeometry(geometry, 24)
+  // Edges come precomputed from the worker, see the note there on why
+  // EdgesGeometry draws phantom lines across boolean results.
+  const edgeGeometry = new THREE.BufferGeometry()
+  edgeGeometry.setAttribute('position', new THREE.BufferAttribute(
+    payload.edgePositions?.length ? payload.edgePositions : new Float32Array(0), 3
+  ))
   wireframe = new THREE.LineSegments(
-    edges,
-    new THREE.LineBasicMaterial({ color: 0x11141b, transparent: true, opacity: 0.55 })
+    edgeGeometry,
+    new THREE.LineBasicMaterial({ color: 0x1b2028, transparent: true, opacity: 0.9 })
   )
   wireframe.visible = showWireframe
   modelGroup.add(wireframe)
@@ -574,7 +578,7 @@ export const frameModel = (stats) => {
   if (!camera || !controls) return
   const size = stats?.size?.some((n) => n > 0) ? stats.size : [200, 200, 200]
   const radius = Math.hypot(...size) / 2
-  const distance = (radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.35
+  const distance = (radius / Math.sin((perspCamera.fov * Math.PI) / 360)) * 1.35
   const center = new THREE.Vector3(0, 0, size[2] / 2)
 
   const direction = new THREE.Vector3(0.75, -1, 0.72).normalize()

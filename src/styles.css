@@ -445,3 +445,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .dim input:focus { outline: 1px solid var(--accent); }
 .dim-unit { position: absolute; right: 7px; bottom: 6px; font-size: 10px; color: var(--muted); pointer-events: none; }
 .dim-actions { display: flex; gap: 6px; padding-bottom: 2px; }
+
+.viewer-shading {
+  position: absolute; top: 46px; right: 12px;
+  display: flex; gap: 6px; flex-wrap: wrap;
+}

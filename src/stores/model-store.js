@@ -108,6 +108,7 @@ class ModelStore extends Store {
         normals: result.normals,
         planeIds: result.planeIds,
         planes: result.planes,
+        edgePositions: result.edgePositions,
         stats: result.stats
       })
       return true

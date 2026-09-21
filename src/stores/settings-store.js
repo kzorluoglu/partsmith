@@ -18,16 +18,19 @@ class SettingsStore extends Store {
   infill = 0.2
   showGrid = true
   showBuildVolume = true
-  showWireframe = false
+  showWireframe = true
   showAxes = true
   autoPlace = true
-  shading = 'matcap'
+  shading = 'cad'
   showSketch = true
   projection = 'persp'
 
   constructor() {
     super()
-    Object.assign(this, load())
+    const saved = load()
+    // 'matcap' was the old orange render look, before the flat CAD shading.
+    if (saved.shading === 'matcap') delete saved.shading
+    Object.assign(this, saved)
   }
 
   get printer() {
