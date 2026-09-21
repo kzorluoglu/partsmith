@@ -23,9 +23,11 @@ export default class App extends Component {
             aria-label="Model name"
           />
           <span class="spacer"></span>
-          {!ai.ready && <span class="badge warn">no API key</span>}
           {model.running && <span class="badge">building</span>}
-          <button class="link" click={() => { ai.settingsOpen = true }}>settings</button>
+          {/* The key lives behind this button, so it has to read as one. */}
+          <button class={`button small ${ai.ready ? 'ghost' : ''}`} click={() => { ai.settingsOpen = true }}>
+            {ai.ready ? '⚙ settings' : '⚙ add API key'}
+          </button>
         </header>
 
         <main class="layout">

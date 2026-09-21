@@ -27,9 +27,9 @@ export default class SettingsDialog extends Component {
     return (
       <div class="backdrop" click={this.maybeClose}>
         <div class="dialog">
-          <header class="panel-head">
+          <header class="dialog-head">
             <h2>OpenRouter</h2>
-            <button class="link" click={() => { ai.settingsOpen = false }}>close</button>
+            <button class="icon-button" title="Close (Esc)" aria-label="Close" click={this.close}>×</button>
           </header>
 
           <label class="field">
@@ -77,12 +77,34 @@ export default class SettingsDialog extends Component {
             ))}
             {list.length === 0 && <p class="empty">No model matches that filter.</p>}
           </div>
+
+          <footer class="dialog-foot">
+            <span class="hint">{ai.apiKey ? 'Key saved in this browser.' : 'Paste a key to start generating.'}</span>
+            <button class="button" click={this.close}>Done</button>
+          </footer>
         </div>
       </div>
     )
   }
 
+  close = () => { ai.settingsOpen = false }
+
   maybeClose = (event) => {
-    if (event.target === event.currentTarget) ai.settingsOpen = false
+    if (event.target === event.currentTarget) this.close()
+  }
+
+  onKeydown = (event) => {
+    if (event.key === 'Escape' && ai.settingsOpen) this.close()
+  }
+
+  onAfterRender() {
+    // The dialog is always mounted, so the key handler lives on the document
+    // rather than on an element that comes and goes.
+    document.addEventListener('keydown', this.onKeydown)
+  }
+
+  dispose() {
+    document.removeEventListener('keydown', this.onKeydown)
+    super.dispose()
   }
 }
