@@ -9,7 +9,7 @@ import jscad from '@jscad/modeling'
 import stlSerializer from '@jscad/stl-serializer'
 import threeMfSerializer from '@jscad/3mf-serializer'
 
-const { geometries, transforms, measurements, booleans } = jscad
+const { geometries, transforms, measurements, booleans, primitives, extrusions, maths } = jscad
 
 /** Result of the most recent successful run, reused by the exporters. */
 let current = null
@@ -44,7 +44,7 @@ const compile = (code) => {
   const locals = factory(jscad, requireShim, moduleObj, moduleObj.exports)
   const exported = moduleObj.exports || {}
 
-  const main = locals.main || exported.main || (typeof exported === 'function' ? exported : undefined)
+  const main = exported.main || locals.main || (typeof exported === 'function' ? exported : undefined)
   const getParameterDefinitions =
     locals.getParameterDefinitions || exported.getParameterDefinitions
 
@@ -98,6 +98,13 @@ const tessellate = (solids) => {
   let volume = 0
   let t = 0
 
+  // Planar face grouping for picking. Triangles that share a plane (quantised
+  // normal and offset) get one id, so the viewer can highlight and sketch on a
+  // whole face even though JSCAD splits it into many polygons.
+  const planeIds = new Uint32Array(triangleCount)
+  const planeIndex = new Map()
+  const planes = []
+
   // Vector area of the surface. On a closed surface it sums to zero, and
   // unlike edge matching it is not confused by the T-junctions that JSCAD's
   // boolean ops leave behind on perfectly valid solids.
@@ -107,6 +114,7 @@ const tessellate = (solids) => {
   let totalArea = 0
 
   const downFaces = []
+  let tri = 0
 
   for (const poly of polygons) {
     const verts = poly.vertices
@@ -129,6 +137,21 @@ const tessellate = (solids) => {
       if (len > 0) { nx /= len; ny /= len; nz /= len }
 
       if (nz < -0.7071 && area > 0) downFaces.push({ area, z: Math.min(a[2], b[2], c[2]) })
+
+      const offset = nx * a[0] + ny * a[1] + nz * a[2]
+      const planeKey = `${Math.round(nx * 500)},${Math.round(ny * 500)},${Math.round(nz * 500)}|${Math.round(offset * 50)}`
+      let planeId = planeIndex.get(planeKey)
+      if (planeId === undefined) {
+        planeId = planes.length
+        planeIndex.set(planeKey, planeId)
+        planes.push({ normal: [nx, ny, nz], offset, area: 0, cx: 0, cy: 0, cz: 0 })
+      }
+      const plane = planes[planeId]
+      plane.area += area
+      plane.cx += area * (a[0] + b[0] + c[0]) / 3
+      plane.cy += area * (a[1] + b[1] + c[1]) / 3
+      plane.cz += area * (a[2] + b[2] + c[2]) / 3
+      planeIds[tri++] = planeId
 
       // Signed tetrahedron volume against the origin.
       volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) -
@@ -154,9 +177,20 @@ const tessellate = (solids) => {
   const overhangArea = downFaces.reduce((sum, f) => (f.z > plateZ ? sum + f.area : sum), 0)
 
   const empty = triangleCount === 0
+  for (const plane of planes) {
+    if (plane.area > 0) {
+      plane.centroid = [plane.cx / plane.area, plane.cy / plane.area, plane.cz / plane.area]
+    } else {
+      plane.centroid = [0, 0, 0]
+    }
+    delete plane.cx; delete plane.cy; delete plane.cz
+  }
+
   return {
     positions,
     normals,
+    planeIds,
+    planes,
     stats: {
       empty,
       triangles: triangleCount,
@@ -190,7 +224,44 @@ const layFlat = (solids) => {
   ], solid))
 }
 
-const run = ({ code, params, autoPlace = true }) => {
+/**
+ * Sketch features drawn in the viewer: a 2D shape on a picked face, extruded
+ * outwards (add) or into the body (cut). They are applied after layFlat so the
+ * plane data recorded in the viewer's coordinates stays valid.
+ */
+const buildTool = (feature) => {
+  const { plane, sketch, depth, op } = feature
+  const shape = sketch.type === 'circle'
+    ? primitives.circle({ radius: sketch.r, center: [sketch.u, sketch.v], segments: 64 })
+    : primitives.rectangle({ size: [sketch.w, sketch.h], center: [sketch.u, sketch.v] })
+
+  // Sink the tool 0.2 mm into the body so no face ends up coplanar with the
+  // one it was sketched on, that is the classic source of broken CSG output.
+  const bleed = 0.2
+  let solid = extrusions.extrudeLinear({ height: depth + bleed }, shape)
+  solid = transforms.translateZ(op === 'cut' ? -depth : -bleed, solid)
+
+  const [u, v, n, o] = [plane.u, plane.v, plane.normal, plane.origin]
+  const matrix = maths.mat4.fromValues(
+    u[0], u[1], u[2], 0,
+    v[0], v[1], v[2], 0,
+    n[0], n[1], n[2], 0,
+    o[0], o[1], o[2], 1
+  )
+  return transforms.transform(matrix, solid)
+}
+
+const applyFeatures = (solids, features) => {
+  if (!features || features.length === 0) return solids
+  let body = solids.length === 1 ? solids[0] : booleans.union(solids)
+  for (const feature of features) {
+    const tool = buildTool(feature)
+    body = feature.op === 'cut' ? booleans.subtract(body, tool) : booleans.union(body, tool)
+  }
+  return [body]
+}
+
+const run = ({ code, params, autoPlace = true, features = [] }) => {
   const { main, getParameterDefinitions } = compile(code)
   const { defs, values } = readParams(getParameterDefinitions, params)
 
@@ -198,6 +269,7 @@ const run = ({ code, params, autoPlace = true }) => {
   let solids = collectSolids(main(values))
   if (solids.length === 0) throw new Error('main() did not return any 3D geometry (geom3)')
   if (autoPlace) solids = layFlat(solids)
+  solids = applyFeatures(solids, features)
 
   const mesh = tessellate(solids)
   current = { solids, code, params: values }
@@ -205,6 +277,8 @@ const run = ({ code, params, autoPlace = true }) => {
   return {
     positions: mesh.positions,
     normals: mesh.normals,
+    planeIds: mesh.planeIds,
+    planes: mesh.planes,
     stats: { ...mesh.stats, duration: Math.round(performance.now() - started) },
     paramDefs: defs,
     paramValues: values
@@ -230,7 +304,7 @@ self.onmessage = (event) => {
   try {
     if (type === 'run') {
       const result = run(payload)
-      self.postMessage({ id, ok: true, result }, [result.positions.buffer, result.normals.buffer])
+      self.postMessage({ id, ok: true, result }, [result.positions.buffer, result.normals.buffer, result.planeIds.buffer])
       return
     }
     if (type === 'export') {

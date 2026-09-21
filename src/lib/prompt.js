@@ -61,7 +61,7 @@ Give the script a short header comment naming the part and its intended use.
 Name helper functions after the feature they build. Keep the script under 150 lines.`
 
 /** Explains the current state of the model so follow up edits stay grounded. */
-export const contextMessage = ({ stats, printer, material, warnings }) => {
+export const contextMessage = ({ stats, printer, material, warnings, features = [] }) => {
   if (!stats) {
     return `Target printer: ${printer.name}, build volume ${printer.volume.join(' x ')} mm. Material: ${material.name}.`
   }
@@ -72,6 +72,9 @@ export const contextMessage = ({ stats, printer, material, warnings }) => {
   ]
   if (warnings?.length) {
     lines.push(`Open issues: ${warnings.map((w) => w.text).join(' ')}`)
+  }
+  if (features.length) {
+    lines.push(`The user has ${features.length} sketch feature(s) drawn in the viewer that are applied on top of main()'s output automatically. Do not try to recreate them.`)
   }
   return lines.join('\n')
 }

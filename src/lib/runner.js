@@ -50,7 +50,7 @@ const plain = (value) => {
  * A script stuck in an endless loop would block the worker forever, so every
  * run gets a hard deadline and a fresh worker if it blows past it.
  */
-export const runScript = (code, params, { timeout = 20000, autoPlace = true } = {}) =>
+export const runScript = (code, params, { timeout = 20000, autoPlace = true, features = [] } = {}) =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       worker?.terminate()
@@ -59,7 +59,7 @@ export const runScript = (code, params, { timeout = 20000, autoPlace = true } = 
       reject(new Error(`the script did not finish within ${timeout / 1000}s and was aborted`))
     }, timeout)
 
-    send('run', { code: String(code), params: plain(params), autoPlace })
+    send('run', { code: String(code), params: plain(params), autoPlace, features: plain(features) })
       .then(resolve, reject)
       .finally(() => clearTimeout(timer))
   })

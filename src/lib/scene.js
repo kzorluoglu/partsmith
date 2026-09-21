@@ -5,6 +5,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Canvas2DRenderer } from './canvas2d-renderer.js'
+import { planeBasis, toPlane, fromPlane, sketchFromDrag, sketchOutline } from './features.js'
 
 let renderer, scene, camera, controls
 let modelGroup, meshMaterial, mesh, wireframe
@@ -13,6 +14,15 @@ let frameHandle = 0
 let resizeObserver
 let software = false
 let dirty = true
+
+// Picking and sketching state. Plain module state on purpose, see the header.
+let meshData = null          // { positions, planeIds, planes } of the current model
+let highlight = null         // mesh covering the hovered or selected planar face
+let preview = null           // line showing the sketch being dragged
+let pick = { enabled: false, tool: 'select', selected: null, hoverId: -1, onSelect: null, onSketch: null }
+let drag = null
+const raycaster = new THREE.Raycaster()
+const pointer = new THREE.Vector2()
 
 /** True when the scene is being drawn on the CPU because WebGL was unavailable. */
 export const isSoftware = () => software
@@ -173,6 +183,10 @@ export const setGeometry = (payload, { shading = 'matcap', showWireframe = false
   geometry.setAttribute('normal', new THREE.BufferAttribute(payload.normals, 3))
   geometry.computeBoundingSphere()
 
+  meshData = { positions: payload.positions, planeIds: payload.planeIds, planes: payload.planes }
+  setHighlight(null)
+  setPreview(null)
+
   meshMaterial = makeMaterial(shading)
   mesh = new THREE.Mesh(geometry, meshMaterial)
   mesh.castShadow = true
@@ -187,6 +201,166 @@ export const setGeometry = (payload, { shading = 'matcap', showWireframe = false
   wireframe.visible = showWireframe
   modelGroup.add(wireframe)
 }
+
+/* ---- face picking and sketching ------------------------------------- */
+
+const facePlane = (planeId) => {
+  const plane = meshData?.planes?.[planeId]
+  if (!plane) return null
+  return { id: planeId, ...planeBasis(plane.normal, plane.centroid), area: plane.area }
+}
+
+/** Draws a translucent copy of every triangle on the given plane. */
+const setHighlight = (planeId, strong = false) => {
+  disposeObject(highlight)
+  highlight = null
+  dirty = true
+  if (planeId == null || planeId < 0 || !meshData) return
+
+  const { positions, planeIds } = meshData
+  const picked = []
+  for (let t = 0; t < planeIds.length; t++) {
+    if (planeIds[t] !== planeId) continue
+    for (let k = 0; k < 9; k++) picked.push(positions[t * 9 + k])
+  }
+  if (picked.length === 0) return
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(picked, 3))
+  highlight = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    color: strong ? 0x4fc3f7 : 0xffffff,
+    transparent: true,
+    opacity: strong ? 0.45 : 0.18,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    side: THREE.DoubleSide
+  }))
+  modelGroup.add(highlight)
+}
+
+const setPreview = (sketch, plane) => {
+  disposeObject(preview)
+  preview = null
+  dirty = true
+  if (!sketch || !plane) return
+  const pts = sketchOutline(sketch).map(([u, v]) => new THREE.Vector3(...fromPlane(plane, u, v, 0.15)))
+  preview = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0x4fc3f7, linewidth: 2 })
+  )
+  modelGroup.add(preview)
+}
+
+const updatePointer = (event) => {
+  const rect = renderer.domElement.getBoundingClientRect()
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  raycaster.setFromCamera(pointer, camera)
+}
+
+const hitModel = () => {
+  if (!mesh) return null
+  const hits = raycaster.intersectObject(mesh, false)
+  return hits.length ? hits[0] : null
+}
+
+/** Where the pointer ray crosses the selected face's infinite plane, in (u, v). */
+const hitPlane = (plane) => {
+  const p = new THREE.Plane().setFromNormalAndCoplanarPoint(
+    new THREE.Vector3(...plane.normal), new THREE.Vector3(...plane.origin)
+  )
+  const point = raycaster.ray.intersectPlane(p, new THREE.Vector3())
+  return point ? toPlane(plane, point.toArray()) : null
+}
+
+const onPointerDown = (event) => {
+  if (!pick.enabled || event.button !== 0) return
+  updatePointer(event)
+  const sketching = pick.tool !== 'select' && pick.selected
+  if (sketching) {
+    const start = hitPlane(pick.selected)
+    if (!start) return
+    // The drag belongs to the sketch now, not to the camera.
+    controls.enabled = false
+    drag = { kind: 'sketch', start, sketch: null }
+    event.preventDefault()
+    return
+  }
+  drag = { kind: 'maybe-select', x: event.clientX, y: event.clientY }
+}
+
+const onPointerMove = (event) => {
+  if (!pick.enabled) return
+  updatePointer(event)
+
+  if (drag?.kind === 'sketch') {
+    const now = hitPlane(pick.selected)
+    if (!now) return
+    drag.sketch = sketchFromDrag(pick.tool, drag.start, now)
+    setPreview(drag.sketch, pick.selected)
+    return
+  }
+
+  // Hover feedback while nothing is being dragged.
+  if (drag) return
+  const hit = hitModel()
+  const id = hit ? meshData?.planeIds[hit.faceIndex] : -1
+  if (id !== pick.hoverId) {
+    pick.hoverId = id
+    if (pick.selected?.id !== id) setHighlight(id, false)
+    else setHighlight(id, true)
+    renderer.domElement.style.cursor = id >= 0 ? (pick.tool === 'select' ? 'pointer' : 'crosshair') : ''
+  }
+}
+
+const onPointerUp = (event) => {
+  if (!pick.enabled || !drag) return
+  const current = drag
+  drag = null
+
+  if (current.kind === 'sketch') {
+    controls.enabled = true
+    setPreview(null)
+    if (current.sketch) pick.onSketch?.(current.sketch, pick.selected)
+    return
+  }
+
+  // A real orbit drag must not count as a click.
+  const moved = Math.hypot(event.clientX - current.x, event.clientY - current.y)
+  if (moved > 4) return
+  updatePointer(event)
+  const hit = hitModel()
+  const id = hit ? meshData.planeIds[hit.faceIndex] : -1
+  selectFace(id >= 0 ? id : null)
+}
+
+export const selectFace = (planeId) => {
+  pick.selected = planeId == null ? null : facePlane(planeId)
+  setHighlight(pick.selected ? pick.selected.id : null, true)
+  pick.onSelect?.(pick.selected)
+}
+
+/** Switches picking on and wires the callbacks the store listens to. */
+export const enablePicking = ({ onSelect, onSketch }) => {
+  pick.enabled = true
+  pick.onSelect = onSelect
+  pick.onSketch = onSketch
+  const el = renderer.domElement
+  el.addEventListener('pointerdown', onPointerDown)
+  el.addEventListener('pointermove', onPointerMove)
+  el.addEventListener('pointerup', onPointerUp)
+  el.addEventListener('pointerleave', () => { if (!drag) { pick.hoverId = -1; if (!pick.selected) setHighlight(null) } })
+}
+
+export const setTool = (tool) => {
+  pick.tool = tool
+  if (pick.selected) setHighlight(pick.selected.id, true)
+}
+
+/** Draws a committed or pending sketch outline without a drag going on. */
+export const showSketch = (sketch, plane) => setPreview(sketch, plane)
 
 export const setShading = (shading) => {
   if (!mesh) return

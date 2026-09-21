@@ -1,5 +1,6 @@
 import { Component } from '@geajs/core'
 import ParamControl from './param-control.tsx'
+import FeaturePanel from './feature-panel.tsx'
 import model from '../stores/model-store.js'
 
 /** Renders the script's getParameterDefinitions() as live controls. */
@@ -29,6 +30,7 @@ export default class ParamPanel extends Component {
               <ParamControl def={def} value={params[def.name]} />
             </div>
           ))}
+          <FeaturePanel />
         </div>
       </section>
     )

@@ -93,7 +93,8 @@ class AiStore extends Store {
           stats: model.stats,
           printer: settings.printer,
           material: settings.material,
-          warnings: model.warnings
+          warnings: model.warnings,
+          features: model.features
         })
       },
       ...history,

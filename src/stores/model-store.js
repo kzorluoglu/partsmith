@@ -3,10 +3,20 @@ import { runScript, exportModel } from '../lib/runner.js'
 import { printWarnings, estimateMaterial } from '../lib/print.js'
 import { saveFile, slugify, formatBytes } from '../lib/download.js'
 import { STARTER } from '../lib/examples.js'
+import { bakeFeatures } from '../lib/features.js'
 import { emit } from '../lib/bus.js'
 import settings from './settings-store.js'
 
 const CODE_STORAGE = 'partsmith.code'
+const FEATURES_STORAGE = 'partsmith.features'
+
+const loadFeatures = () => {
+  try {
+    return JSON.parse(localStorage.getItem(FEATURES_STORAGE) || '[]')
+  } catch {
+    return []
+  }
+}
 
 const loadCode = () => {
   try {
@@ -28,6 +38,8 @@ class ModelStore extends Store {
   error = ''
   history = []
   exportInfo = ''
+  features = loadFeatures()
+  planes = []
 
   get material() {
     if (!this.stats) return null
@@ -83,13 +95,21 @@ class ModelStore extends Store {
     this.error = ''
     try {
       const result = await runScript(this.code, keepParams ? this.params : {}, {
-        autoPlace: settings.autoPlace
+        autoPlace: settings.autoPlace,
+        features: this.features
       })
       this.paramDefs = result.paramDefs
       this.params = result.paramValues
       this.stats = result.stats
+      this.planes = result.planes
       this.warnings = printWarnings(result.stats, settings.printer)
-      emit('geometry', { positions: result.positions, normals: result.normals, stats: result.stats })
+      emit('geometry', {
+        positions: result.positions,
+        normals: result.normals,
+        planeIds: result.planeIds,
+        planes: result.planes,
+        stats: result.stats
+      })
       return true
     } catch (error) {
       this.error = error.message
@@ -100,6 +120,61 @@ class ModelStore extends Store {
     } finally {
       this.running = false
     }
+  }
+
+  /* ---- sketch features ------------------------------------------------ */
+
+  persistFeatures() {
+    try {
+      localStorage.setItem(FEATURES_STORAGE, JSON.stringify(this.features))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  addFeature(feature) {
+    this.features = [...this.features, { id: Date.now().toString(36), ...feature }]
+    this.persistFeatures()
+    return this.run({ keepParams: true })
+  }
+
+  updateFeature(id, patch) {
+    this.features = this.features.map((f) => (f.id === id ? { ...f, ...patch } : f))
+    this.persistFeatures()
+    return this.run({ keepParams: true })
+  }
+
+  removeFeature(id) {
+    this.features = this.features.filter((f) => f.id !== id)
+    this.persistFeatures()
+    return this.run({ keepParams: true })
+  }
+
+  clearFeatures() {
+    this.features = []
+    this.persistFeatures()
+    return this.run({ keepParams: true })
+  }
+
+  /**
+   * Writes the features into the script as JSCAD code and empties the list.
+   * From then on they are ordinary geometry the AI can see and edit.
+   */
+  async bakeFeatures() {
+    if (this.features.length === 0) return
+    const baked = bakeFeatures(this.code, this.features, { autoPlace: settings.autoPlace })
+    const previous = this.features
+    this.features = []
+    this.persistFeatures()
+    this.setCode(baked)
+    const ok = await this.run({ keepParams: true })
+    if (!ok) {
+      // Roll back rather than leave a broken script and lost features.
+      this.undo()
+      this.features = previous
+      this.persistFeatures()
+    }
+    return ok
   }
 
   async download(format) {

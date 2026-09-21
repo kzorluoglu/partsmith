@@ -1,5 +1,7 @@
 import { Component } from '@geajs/core'
-import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, setView, destroyScene, isSoftware } from '../lib/scene.js'
+import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, setView, destroyScene, isSoftware, enablePicking, showSketch } from '../lib/scene.js'
+import SketchToolbar from './sketch-toolbar.tsx'
+import sketch from '../stores/sketch-store.js'
 import { on } from '../lib/bus.js'
 import settings from '../stores/settings-store.js'
 import model from '../stores/model-store.js'
@@ -47,6 +49,8 @@ export default class Viewer extends Component {
           <button class={`chip ${settings.showAxes ? 'on' : ''}`} click={() => this.toggle('showAxes')}>axes</button>
         </div>
 
+        <SketchToolbar />
+
         {stats && (
           <div class="viewer-dims">
             {stats.size[0].toFixed(1)} × {stats.size[1].toFixed(1)} × {stats.size[2].toFixed(1)} mm
@@ -83,6 +87,15 @@ export default class Viewer extends Component {
         if (payload && this.firstFrame) {
           frameModel(payload.stats)
           this.firstFrame = false
+        }
+      })
+
+      enablePicking({
+        onSelect: (plane) => sketch.onSelect(plane),
+        onSketch: (shape, plane) => {
+          sketch.onSketch(shape, plane)
+          // Keep the outline visible while the depth popover is open.
+          showSketch(shape, plane)
         }
       })
 
