@@ -7,6 +7,9 @@
 
 ![PartSmith](docs/demo.gif)
 
+*Adjusting a parameter, orbiting the solid, and the print check. The prompt step is above
+this, in the left panel.*
+
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![no backend](https://img.shields.io/badge/backend-none-brightgreen)
 ![gea](https://img.shields.io/badge/built%20with-Gea%20%2B%20three.js-orange)
