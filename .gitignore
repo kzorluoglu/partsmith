@@ -1,0 +1,7 @@
+node_modules
+dist
+*.log
+
+# Vendored copy of the upstream Gea agent skill, useful locally but not ours
+# to redistribute. Get it from github.com/dashersw/gea.
+.claude/
