@@ -5,7 +5,9 @@
  * A feature is plain data:
  *   { id, op: 'add' | 'cut', depth,
  *     plane: { origin, normal, u, v },        // world space basis of the face
- *     sketch: { type: 'rect', u, v, w, h } | { type: 'circle', u, v, r } }
+ *     sketch: { type: 'rect', u, v, w, h }
+ *           | { type: 'circle', u, v, r }
+ *           | { type: 'poly', points: [[u, v], ...] } }
  * Sketch coordinates are in the plane's (u, v) frame, relative to origin.
  */
 
@@ -56,8 +58,45 @@ export const sketchFromDrag = (type, a, b, step = 1) => {
   return { type: 'rect', u: (au + bu) / 2, v: (av + bv) / 2, w, h }
 }
 
+/** Angle of a segment in degrees, measured in the plane's own frame. */
+export const segmentAngle = (from, to) => {
+  const deg = Math.atan2(to[1] - from[1], to[0] - from[0]) * 180 / Math.PI
+  return (deg + 360) % 360
+}
+
+export const segmentLength = (from, to) => Math.hypot(to[0] - from[0], to[1] - from[1])
+
+/** Point at an exact length and angle from `from`. */
+export const pointAt = (from, lengthMm, angleDeg) => {
+  const rad = angleDeg * Math.PI / 180
+  return [from[0] + Math.cos(rad) * lengthMm, from[1] + Math.sin(rad) * lengthMm]
+}
+
+/**
+ * Snaps a freehand point: to the grid, and to the horizontal / vertical axis
+ * of the face when the segment is within `tolDeg` of it. That is what makes a
+ * mouse drawn rectangle actually come out square.
+ */
+export const snapPoint = (from, to, { step = 1, tolDeg = 6 } = {}) => {
+  if (!from) return [snap(to[0], step), snap(to[1], step)]
+  const len = segmentLength(from, to)
+  if (len < 1e-6) return [...from]
+  const angle = segmentAngle(from, to)
+  const nearest = Math.round(angle / 90) * 90
+  if (Math.abs(((angle - nearest + 540) % 360) - 180) > 180 - tolDeg) {
+    const p = pointAt(from, len, nearest)
+    return [snap(p[0], step), snap(p[1], step)]
+  }
+  return [snap(to[0], step), snap(to[1], step)]
+}
+
 /** Outline of a sketch as plane coordinates, for the preview line. */
 export const sketchOutline = (sketch) => {
+  if (sketch.type === 'poly') {
+    const pts = sketch.points.map((p) => [...p])
+    if (pts.length > 2) pts.push([...pts[0]])
+    return pts
+  }
   if (sketch.type === 'circle') {
     const pts = []
     for (let i = 0; i <= 64; i++) {
@@ -76,9 +115,10 @@ export const sketchOutline = (sketch) => {
 }
 
 export const describeFeature = (f) => {
-  const shape = f.sketch.type === 'circle'
-    ? `circle Ø${(f.sketch.r * 2).toFixed(1)}`
-    : `rect ${f.sketch.w.toFixed(1)}×${f.sketch.h.toFixed(1)}`
+  const s = f.sketch
+  const shape = s.type === 'circle' ? `circle Ø${(s.r * 2).toFixed(1)}`
+    : s.type === 'poly' ? `profile, ${s.points.length} pts`
+    : `rect ${s.w.toFixed(1)}×${s.h.toFixed(1)}`
   return `${f.op === 'cut' ? 'Cut' : 'Add'} ${shape} · ${f.depth.toFixed(1)} mm`
 }
 
@@ -104,7 +144,9 @@ export const bakeFeatures = (code, features, { autoPlace = true } = {}) => {
   const lines = features.map((f, i) => {
     const shape = f.sketch.type === 'circle'
       ? `primitives.circle({ radius: ${num(f.sketch.r)}, center: [${num(f.sketch.u)}, ${num(f.sketch.v)}], segments: 64 })`
-      : `primitives.rectangle({ size: [${num(f.sketch.w)}, ${num(f.sketch.h)}], center: [${num(f.sketch.u)}, ${num(f.sketch.v)}] })`
+      : f.sketch.type === 'poly'
+        ? `primitives.polygon({ points: [${f.sketch.points.map((p) => `[${num(p[0])}, ${num(p[1])}]`).join(', ')}] })`
+        : `primitives.rectangle({ size: [${num(f.sketch.w)}, ${num(f.sketch.h)}], center: [${num(f.sketch.u)}, ${num(f.sketch.v)}] })`
     const sink = f.op === 'cut' ? -f.depth : -0.2
     const { u, v, normal: n, origin: o } = f.plane
     const matrix = `maths.mat4.fromValues(${vec(u).slice(1, -1)}, 0, ${vec(v).slice(1, -1)}, 0, ${vec(n).slice(1, -1)}, 0, ${vec(o).slice(1, -1)}, 1)`

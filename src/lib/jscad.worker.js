@@ -233,7 +233,9 @@ const buildTool = (feature) => {
   const { plane, sketch, depth, op } = feature
   const shape = sketch.type === 'circle'
     ? primitives.circle({ radius: sketch.r, center: [sketch.u, sketch.v], segments: 64 })
-    : primitives.rectangle({ size: [sketch.w, sketch.h], center: [sketch.u, sketch.v] })
+    : sketch.type === 'poly'
+      ? primitives.polygon({ points: sketch.points })
+      : primitives.rectangle({ size: [sketch.w, sketch.h], center: [sketch.u, sketch.v] })
 
   // Sink the tool 0.2 mm into the body so no face ends up coplanar with the
   // one it was sketched on, that is the classic source of broken CSG output.

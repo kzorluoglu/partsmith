@@ -22,6 +22,8 @@ class SettingsStore extends Store {
   showAxes = true
   autoPlace = true
   shading = 'matcap'
+  showSketch = true
+  projection = 'persp'
 
   constructor() {
     super()
@@ -48,7 +50,7 @@ class SettingsStore extends Store {
 
   persist() {
     const snapshot = {}
-    for (const key of ['printerId', 'materialId', 'infill', 'showGrid', 'showBuildVolume', 'showWireframe', 'showAxes', 'autoPlace', 'shading']) {
+    for (const key of ['printerId', 'materialId', 'infill', 'showGrid', 'showBuildVolume', 'showWireframe', 'showAxes', 'autoPlace', 'shading', 'showSketch', 'projection']) {
       snapshot[key] = this[key]
     }
     try {

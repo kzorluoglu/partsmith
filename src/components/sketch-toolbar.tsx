@@ -4,14 +4,17 @@ import { setTool, selectFace, showSketch } from '../lib/scene.js'
 
 const TOOLS = [
   { id: 'select', label: 'select', title: 'Pick a face' },
+  { id: 'line', label: '⟋ line', title: 'Click point to point, type exact lengths' },
   { id: 'rect', label: '▭ rect', title: 'Drag a rectangle on the selected face' },
   { id: 'circle', label: '○ circle', title: 'Drag a circle on the selected face' }
 ]
 
-/** Floats over the viewer: shape tools, the current hint and the depth popover. */
+/** Floats over the viewer: tools, live dimensions and the depth popover. */
 export default class SketchToolbar extends Component {
+  lengthEl = null
+
   template() {
-    const { tool, selected, pending, hint, depth } = sketch
+    const { tool, selected, pending, hint, depth, readout, drawing, canClose } = sketch
     return (
       <div class="sketchbar">
         <div class="sketchbar-tools">
@@ -29,6 +32,41 @@ export default class SketchToolbar extends Component {
 
         <p class="sketchbar-hint">{hint}</p>
 
+        {tool === 'line' && selected && !pending && (
+          <div class="dimbar">
+            <label class="dim">
+              <span>Length</span>
+              <input
+                ref={this.lengthEl}
+                type="number"
+                min="0"
+                step="0.5"
+                placeholder={readout ? readout.length.toFixed(1) : '0'}
+                value={sketch.lengthInput}
+                input={(e) => { sketch.lengthInput = e.target.value }}
+                keydown={this.onDimKey}
+              />
+              <span class="dim-unit">mm</span>
+            </label>
+            <label class="dim">
+              <span>Angle</span>
+              <input
+                type="number"
+                step="15"
+                placeholder={readout ? readout.angle.toFixed(0) : 'auto'}
+                value={sketch.angleInput}
+                input={(e) => { sketch.angleInput = e.target.value }}
+                keydown={this.onDimKey}
+              />
+              <span class="dim-unit">°</span>
+            </label>
+            <div class="dim-actions">
+              <button class="chip" disabled={!drawing} title="Remove the last point (Backspace)" click={() => sketch.undoPoint()}>undo pt</button>
+              <button class="chip on" disabled={!canClose} title="Close the profile (Enter)" click={() => this.close()}>close</button>
+            </div>
+          </div>
+        )}
+
         {pending && (
           <div class="sketch-popover">
             <label class="field">
@@ -39,7 +77,7 @@ export default class SketchToolbar extends Component {
                 step="0.5"
                 value={depth}
                 input={(e) => { sketch.depth = Number(e.target.value) }}
-                keydown={this.onKeydown}
+                keydown={this.onDepthKey}
               />
             </label>
             <div class="sketch-popover-actions">
@@ -59,6 +97,10 @@ export default class SketchToolbar extends Component {
     showSketch(null)
   }
 
+  close() {
+    if (sketch.closeProfile()) this.blurDim()
+  }
+
   commit(op) {
     showSketch(null)
     sketch.commit(op)
@@ -69,8 +111,38 @@ export default class SketchToolbar extends Component {
     sketch.cancel()
   }
 
-  onKeydown = (event) => {
+  blurDim() {
+    this.lengthEl?.blur()
+  }
+
+  onDimKey = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      // A typed length places the point, an empty box means "close the shape".
+      if (!sketch.applyExact()) this.close()
+    }
+    if (event.key === 'Escape') this.cancel()
+  }
+
+  onDepthKey = (event) => {
     if (event.key === 'Enter') this.commit(sketch.op)
     if (event.key === 'Escape') this.cancel()
+  }
+
+  onAfterRender() {
+    document.addEventListener('keydown', this.onGlobalKey)
+  }
+
+  onGlobalKey = (event) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+    if (sketch.tool !== 'line') return
+    if (event.key === 'Enter' && sketch.canClose) { event.preventDefault(); this.close() }
+    if (event.key === 'Backspace' && sketch.drawing) { event.preventDefault(); sketch.undoPoint() }
+    if (event.key === 'Escape') this.cancel()
+  }
+
+  dispose() {
+    document.removeEventListener('keydown', this.onGlobalKey)
+    super.dispose()
   }
 }

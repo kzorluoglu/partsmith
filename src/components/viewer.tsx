@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, setView, destroyScene, isSoftware, enablePicking, showSketch } from '../lib/scene.js'
+import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, setView, destroyScene, isSoftware, enablePicking, showSketch, setProjection, setOverlayVisible } from '../lib/scene.js'
 import SketchToolbar from './sketch-toolbar.tsx'
 import sketch from '../stores/sketch-store.js'
 import { on } from '../lib/bus.js'
@@ -40,6 +40,11 @@ export default class Viewer extends Component {
             <button key={name} class="chip" click={() => setView(name)}>{name}</button>
           ))}
           <button class="chip" click={() => frameModel(model.stats)}>fit</button>
+          <button
+            class={`chip ${settings.projection === 'ortho' ? 'on' : ''}`}
+            title="Parallel projection, the way a CAD view should measure"
+            click={() => this.setProjection(settings.projection === 'ortho' ? 'persp' : 'ortho')}
+          >{settings.projection === 'ortho' ? 'ortho' : 'persp'}</button>
         </div>
 
         <div class="viewer-toggles">
@@ -47,6 +52,7 @@ export default class Viewer extends Component {
           <button class={`chip ${settings.showBuildVolume ? 'on' : ''}`} click={() => this.toggle('showBuildVolume')}>volume</button>
           <button class={`chip ${settings.showWireframe ? 'on' : ''}`} click={() => this.toggle('showWireframe')}>edges</button>
           <button class={`chip ${settings.showAxes ? 'on' : ''}`} click={() => this.toggle('showAxes')}>axes</button>
+          <button class={`chip ${settings.showSketch ? 'on' : ''}`} title="Sketch overlay, never part of the model or the export" click={() => this.toggleOverlay()}>sketch</button>
         </div>
 
         <SketchToolbar />
@@ -74,6 +80,16 @@ export default class Viewer extends Component {
     setVisibility(settings)
   }
 
+  toggleOverlay() {
+    settings.toggle('showSketch')
+    setOverlayVisible(settings.showSketch)
+  }
+
+  setProjection(mode) {
+    settings.set('projection', mode)
+    setProjection(mode)
+  }
+
   onAfterRender() {
     // A blocked or missing WebGL context must not take the rest of the app
     // down with it, the script and the exporters work fine without a preview.
@@ -90,7 +106,11 @@ export default class Viewer extends Component {
         }
       })
 
+      setProjection(settings.projection)
+      setOverlayVisible(settings.showSketch)
+
       enablePicking({
+        onPoly: (state) => sketch.onPoly(state),
         onSelect: (plane) => sketch.onSelect(plane),
         onSketch: (shape, plane) => {
           sketch.onSketch(shape, plane)

@@ -5,9 +5,11 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Canvas2DRenderer } from './canvas2d-renderer.js'
-import { planeBasis, toPlane, fromPlane, sketchFromDrag, sketchOutline } from './features.js'
+import { planeBasis, toPlane, fromPlane, sketchFromDrag, sketchOutline, snapPoint, segmentLength, segmentAngle, pointAt } from './features.js'
 
 let renderer, scene, camera, controls
+let perspCamera, orthoCamera
+let orthographic = false
 let modelGroup, meshMaterial, mesh, wireframe
 let plate, grid, volumeBox, axes
 let frameHandle = 0
@@ -19,8 +21,12 @@ let dirty = true
 let meshData = null          // { positions, planeIds, planes } of the current model
 let highlight = null         // mesh covering the hovered or selected planar face
 let preview = null           // line showing the sketch being dragged
-let pick = { enabled: false, tool: 'select', selected: null, hoverId: -1, onSelect: null, onSketch: null }
+let pick = { enabled: false, tool: 'select', selected: null, hoverId: -1, onSelect: null, onSketch: null, onPoly: null }
 let drag = null
+
+// Polyline being drawn: committed points plus the rubber band cursor.
+let poly = null
+let overlay = null
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
 
@@ -71,9 +77,16 @@ export const initScene = (canvas) => {
   scene.background = new THREE.Color(0x14161c)
   scene.fog = new THREE.Fog(0x14161c, 600, 1600)
 
-  camera = new THREE.PerspectiveCamera(42, 1, 1, 4000)
-  camera.up.set(0, 0, 1)
-  camera.position.set(180, -220, 160)
+  perspCamera = new THREE.PerspectiveCamera(42, 1, 1, 4000)
+  perspCamera.up.set(0, 0, 1)
+  perspCamera.position.set(180, -220, 160)
+
+  // CAD work wants parallel projection: equal lengths stay equal on screen.
+  orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -5000, 5000)
+  orthoCamera.up.set(0, 0, 1)
+  orthoCamera.position.copy(perspCamera.position)
+
+  camera = perspCamera
 
   controls = new OrbitControls(camera, canvas)
   controls.enableDamping = true
@@ -98,6 +111,12 @@ export const initScene = (canvas) => {
   modelGroup = new THREE.Group()
   scene.add(modelGroup)
 
+  // Sketch graphics live in their own group: never exported, never shaded,
+  // and switchable without touching the model.
+  overlay = new THREE.Group()
+  overlay.name = 'sketch-overlay'
+  scene.add(overlay)
+
   buildPlate([256, 256, 256])
 
   // Redrawing thousands of triangles on the CPU every frame would peg a core
@@ -107,6 +126,10 @@ export const initScene = (canvas) => {
   const animate = () => {
     frameHandle = requestAnimationFrame(animate)
     const moving = controls.update()
+    if (orthographic && (moving || dirty)) {
+      const canvas = renderer.domElement
+      syncOrtho((canvas.clientWidth || 1) / (canvas.clientHeight || 1))
+    }
     if (!software || dirty || moving) {
       renderer.render(scene, camera)
       dirty = false
@@ -119,15 +142,49 @@ export const initScene = (canvas) => {
   resize(canvas)
 }
 
+/** Orthographic frustum sized so it frames the same volume the camera sees. */
+const syncOrtho = (aspect) => {
+  const distance = orthoCamera.position.distanceTo(controls.target)
+  const halfHeight = Math.max(1, distance * Math.tan((perspCamera.fov * Math.PI) / 360))
+  const halfWidth = halfHeight * aspect
+  orthoCamera.left = -halfWidth
+  orthoCamera.right = halfWidth
+  orthoCamera.top = halfHeight
+  orthoCamera.bottom = -halfHeight
+  orthoCamera.updateProjectionMatrix()
+}
+
 const resize = (canvas) => {
   const host = canvas.parentElement || canvas
   const width = host.clientWidth || 1
   const height = host.clientHeight || 1
   renderer.setSize(width, height, false)
-  camera.aspect = width / height
-  camera.updateProjectionMatrix()
+  perspCamera.aspect = width / height
+  perspCamera.updateProjectionMatrix()
+  syncOrtho(width / height)
   dirty = true
 }
+
+/**
+ * Switches projection. Both cameras share one position and target, so the
+ * view does not jump, and the ortho frustum is rebuilt from the distance.
+ */
+export const setProjection = (mode) => {
+  const wantOrtho = mode === 'ortho'
+  if (wantOrtho === orthographic) return
+  orthographic = wantOrtho
+  const next = wantOrtho ? orthoCamera : perspCamera
+  next.position.copy(camera.position)
+  next.up.copy(camera.up)
+  camera = next
+  controls.object = camera
+  const canvas = renderer.domElement
+  syncOrtho((canvas.clientWidth || 1) / (canvas.clientHeight || 1))
+  controls.update()
+  dirty = true
+}
+
+export const isOrthographic = () => orthographic
 
 const disposeObject = (object) => {
   if (!object) return
@@ -237,7 +294,7 @@ const setHighlight = (planeId, strong = false) => {
     polygonOffsetUnits: -2,
     side: THREE.DoubleSide
   }))
-  modelGroup.add(highlight)
+  overlay.add(highlight)
 }
 
 const setPreview = (sketch, plane) => {
@@ -248,9 +305,10 @@ const setPreview = (sketch, plane) => {
   const pts = sketchOutline(sketch).map(([u, v]) => new THREE.Vector3(...fromPlane(plane, u, v, 0.15)))
   preview = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: 0x4fc3f7, linewidth: 2 })
+    new THREE.LineBasicMaterial({ color: 0x4fc3f7, depthTest: false })
   )
-  modelGroup.add(preview)
+  preview.renderOrder = 10
+  overlay.add(preview)
 }
 
 const updatePointer = (event) => {
@@ -275,9 +333,110 @@ const hitPlane = (plane) => {
   return point ? toPlane(plane, point.toArray()) : null
 }
 
+/** Redraws the polyline plus its rubber band segment. */
+const drawPoly = () => {
+  disposeObject(preview)
+  preview = null
+  dirty = true
+  if (!poly || !pick.selected) return
+
+  const pts = [...poly.points]
+  if (poly.cursor) pts.push(poly.cursor)
+  if (pts.length < 2) {
+    // A single placed point still needs to be visible.
+    if (pts.length === 1) {
+      const p = new THREE.Vector3(...fromPlane(pick.selected, pts[0][0], pts[0][1], 0.2))
+      preview = new THREE.Points(
+        new THREE.BufferGeometry().setFromPoints([p]),
+        new THREE.PointsMaterial({ color: 0x4fc3f7, size: 6, sizeAttenuation: false, depthTest: false })
+      )
+      preview.renderOrder = 10
+      overlay.add(preview)
+    }
+    return
+  }
+
+  const world = pts.map(([u, v]) => new THREE.Vector3(...fromPlane(pick.selected, u, v, 0.2)))
+  if (poly.closing && poly.points.length > 2) world.push(world[0])
+  preview = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(world),
+    new THREE.LineBasicMaterial({ color: poly.closing ? 0x3fb950 : 0x4fc3f7, depthTest: false })
+  )
+  preview.renderOrder = 10
+  overlay.add(preview)
+}
+
+const CLOSE_TOLERANCE = 2.5
+
+const reportPoly = () => {
+  if (!pick.onPoly) return
+  const last = poly?.points[poly.points.length - 1]
+  pick.onPoly({
+    points: poly ? poly.points.map((p) => [...p]) : [],
+    cursor: poly?.cursor ? [...poly.cursor] : null,
+    length: last && poly?.cursor ? segmentLength(last, poly.cursor) : 0,
+    angle: last && poly?.cursor ? segmentAngle(last, poly.cursor) : 0,
+    closing: Boolean(poly?.closing)
+  })
+}
+
+/** Places the next polyline point, or closes the profile when back at the start. */
+const addPolyPoint = (uv) => {
+  if (!poly) poly = { points: [], cursor: null, closing: false }
+  if (poly.points.length > 2 && segmentLength(poly.points[0], uv) <= CLOSE_TOLERANCE) {
+    return finishPoly()
+  }
+  poly.points.push(uv)
+  poly.cursor = null
+  drawPoly()
+  reportPoly()
+}
+
+export const finishPoly = () => {
+  if (!poly || poly.points.length < 3) return false
+  const points = poly.points.map((p) => [...p])
+  const plane = pick.selected
+  poly = null
+  drawPoly()
+  reportPoly()
+  pick.onSketch?.({ type: 'poly', points }, plane)
+  return true
+}
+
+export const cancelPoly = () => {
+  poly = null
+  drawPoly()
+  reportPoly()
+}
+
+/** Commits the pending segment at an exact length, optionally an exact angle. */
+export const commitExactSegment = (lengthMm, angleDeg) => {
+  if (!poly || poly.points.length === 0 || !lengthMm) return false
+  const from = poly.points[poly.points.length - 1]
+  const angle = angleDeg == null
+    ? (poly.cursor ? segmentAngle(from, poly.cursor) : 0)
+    : angleDeg
+  addPolyPoint(pointAt(from, lengthMm, angle))
+  return true
+}
+
+export const undoPolyPoint = () => {
+  if (!poly || poly.points.length === 0) return
+  poly.points.pop()
+  if (poly.points.length === 0) poly = null
+  drawPoly()
+  reportPoly()
+}
+
 const onPointerDown = (event) => {
   if (!pick.enabled || event.button !== 0) return
   updatePointer(event)
+  // The polyline is click to place, so it must not lock the orbit controls.
+  if (pick.tool === 'line' && pick.selected) {
+    drag = { kind: 'maybe-point', x: event.clientX, y: event.clientY }
+    return
+  }
+
   const sketching = pick.tool !== 'select' && pick.selected
   if (sketching) {
     const start = hitPlane(pick.selected)
@@ -294,6 +453,18 @@ const onPointerDown = (event) => {
 const onPointerMove = (event) => {
   if (!pick.enabled) return
   updatePointer(event)
+
+  if (pick.tool === 'line' && pick.selected && (!drag || drag.kind === 'maybe-point')) {
+    const raw = hitPlane(pick.selected)
+    if (!raw) return
+    if (!poly) poly = { points: [], cursor: null, closing: false }
+    const from = poly.points[poly.points.length - 1] || null
+    poly.cursor = snapPoint(from, raw)
+    poly.closing = poly.points.length > 2 && segmentLength(poly.points[0], poly.cursor) <= CLOSE_TOLERANCE
+    drawPoly()
+    reportPoly()
+    return
+  }
 
   if (drag?.kind === 'sketch') {
     const now = hitPlane(pick.selected)
@@ -320,6 +491,17 @@ const onPointerUp = (event) => {
   const current = drag
   drag = null
 
+  if (current.kind === 'maybe-point') {
+    const moved = Math.hypot(event.clientX - current.x, event.clientY - current.y)
+    if (moved > 4) return          // that was an orbit, not a click
+    updatePointer(event)
+    const raw = hitPlane(pick.selected)
+    if (!raw) return
+    const from = poly?.points[poly.points.length - 1] || null
+    addPolyPoint(snapPoint(from, raw))
+    return
+  }
+
   if (current.kind === 'sketch') {
     controls.enabled = true
     setPreview(null)
@@ -337,16 +519,19 @@ const onPointerUp = (event) => {
 }
 
 export const selectFace = (planeId) => {
+  poly = null
+  drawPoly()
   pick.selected = planeId == null ? null : facePlane(planeId)
   setHighlight(pick.selected ? pick.selected.id : null, true)
   pick.onSelect?.(pick.selected)
 }
 
 /** Switches picking on and wires the callbacks the store listens to. */
-export const enablePicking = ({ onSelect, onSketch }) => {
+export const enablePicking = ({ onSelect, onSketch, onPoly }) => {
   pick.enabled = true
   pick.onSelect = onSelect
   pick.onSketch = onSketch
+  pick.onPoly = onPoly
   const el = renderer.domElement
   el.addEventListener('pointerdown', onPointerDown)
   el.addEventListener('pointermove', onPointerMove)
@@ -356,7 +541,13 @@ export const enablePicking = ({ onSelect, onSketch }) => {
 
 export const setTool = (tool) => {
   pick.tool = tool
+  cancelPoly()
   if (pick.selected) setHighlight(pick.selected.id, true)
+}
+
+export const setOverlayVisible = (visible) => {
+  if (overlay) overlay.visible = visible
+  dirty = true
 }
 
 /** Draws a committed or pending sketch outline without a drag going on. */
@@ -392,6 +583,11 @@ export const frameModel = (stats) => {
   controls.update()
   dirty = true
 }
+
+/** Camera position and target, for debugging and tests. */
+export const cameraState = () => (camera && controls
+  ? { position: camera.position.toArray(), target: controls.target.toArray() }
+  : null)
 
 export const setView = (name) => {
   if (!camera || !controls) return
