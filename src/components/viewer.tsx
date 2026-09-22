@@ -1,10 +1,10 @@
 import { Component } from '@geajs/core'
-import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, destroyScene, isSoftware, enablePicking, showSketch, setProjection, setOverlayVisible } from '../lib/scene.js'
-import SketchToolbar from './sketch-toolbar.tsx'
+import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, destroyScene, isSoftware, setProjection, setOverlayVisible } from '../lib/scene.js'
+import * as sketcher from '../lib/sketcher.js'
 import ViewCube from './view-cube.tsx'
 import ViewTools from './view-tools.tsx'
-import ui from '../stores/ui-store.js'
-import sketch from '../stores/sketch-store.js'
+import SketchHud from './sketch-hud.tsx'
+import SectionControl from './section-control.tsx'
 import { on } from '../lib/bus.js'
 import settings from '../stores/settings-store.js'
 import model from '../stores/model-store.js'
@@ -12,6 +12,7 @@ import model from '../stores/model-store.js'
 /** Hosts the WebGL canvas and the overlays drawn on top of it. */
 export default class Viewer extends Component {
   canvasEl = null
+  pillLayer = null
   firstFrame = true
   glError = ''
   software = false
@@ -41,11 +42,11 @@ export default class Viewer extends Component {
           <ViewTools />
         </div>
 
-        {/* Always mounted, only shown in sketch mode: unmounting would drop
-            its document level key handler and any half drawn profile. */}
-        <div class={`sketch-dock ${ui.sketchMode ? 'open' : ''}`}>
-          <SketchToolbar />
-        </div>
+        {/* Dimension pills, positioned by the sketcher in canvas pixels. */}
+        <div ref={this.pillLayer} class="dim-layer"></div>
+
+        <SketchHud />
+        <SectionControl />
 
         <div class="statusbar">
           {stats && <span class="stat">{stats.size[0].toFixed(1)} × {stats.size[1].toFixed(1)} × {stats.size[2].toFixed(1)} mm</span>}
@@ -82,15 +83,7 @@ export default class Viewer extends Component {
       setProjection(settings.projection)
       setOverlayVisible(settings.showSketch)
 
-      enablePicking({
-        onPoly: (state) => sketch.onPoly(state),
-        onSelect: (plane) => sketch.onSelect(plane),
-        onSketch: (shape, plane) => {
-          sketch.onSketch(shape, plane)
-          // Keep the outline visible while the depth popover is open.
-          showSketch(shape, plane)
-        }
-      })
+      sketcher.init(this.pillLayer)
 
       this.offPrinter = settings.observe('printerId', () => buildPlate(settings.printer.volume))
       this.offShading = settings.observe('shading', () => setShading(settings.shading))

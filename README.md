@@ -35,6 +35,28 @@ your prompt ──▶ LLM writes a JSCAD script ──▶ real solid geometry
   Your API key stays in `localStorage`.
 - **Any model you like.** Anything OpenRouter serves, from Claude and GPT to free ones.
 
+## Sketch and extrude
+
+The AI writes the base part, then you shape it by hand like in Shapr3D:
+
+1. **Sketch** in the left rail turns the rail into the sketch toolbox: Line,
+   Rectangle, Circle, Polygon, Ellipse. Clicking the active tool again switches
+   its variant (corner or centre rectangle, 3 to 8 sided polygon).
+2. Click a face of the part, or the grid for a new body. That face becomes the
+   sketch plane, no separate selection step.
+3. Dimensions are pills right beside the geometry. Just type a number, it goes
+   into the active pill, `Tab` moves to the next one, `Enter` places the point.
+   A typed value locks that dimension while the mouse keeps driving the rest.
+4. A closed profile gets an arrow. Drag it or type a distance and press
+   `Enter`. Positive adds material, negative cuts, **Flip** switches.
+
+**Measure** snaps to corners and edge midpoints, **Section View** cuts the part
+along X, Y or Z to check walls and holes. Parameters take a slider, an exact
+value with arrow key stepping, or a drag on their label.
+
+Sketch features stay data on top of the script, so the sliders keep working and
+the AI can keep refining. **Bake into script** writes them out as JSCAD code.
+
 ## Run it
 
 ```bash

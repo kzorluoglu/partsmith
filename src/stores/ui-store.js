@@ -21,6 +21,9 @@ class UiStore extends Store {
   panel = 'panel' in saved ? saved.panel : 'chat'
   sketchMode = false
   exportOpen = false
+  sectionOn = false
+  sectionAxis = 'z'
+  sectionPos = 0
 
   /** Clicking the active rail button again closes its panel. */
   togglePanel(id) {

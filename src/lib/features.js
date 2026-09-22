@@ -114,9 +114,45 @@ export const sketchOutline = (sketch) => {
   ]
 }
 
+/** Regular polygon around (cu, cv); `rotation` is the angle of the first corner. */
+export const regularPolygon = (cu, cv, radius, sides, rotation = 0) => {
+  const pts = []
+  for (let i = 0; i < sides; i++) {
+    const a = rotation + (i / sides) * Math.PI * 2
+    pts.push([cu + Math.cos(a) * radius, cv + Math.sin(a) * radius])
+  }
+  return pts
+}
+
+export const ellipsePoints = (cu, cv, rx, ry, segments = 72) => {
+  const pts = []
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2
+    pts.push([cu + Math.cos(a) * rx, cv + Math.sin(a) * ry])
+  }
+  return pts
+}
+
+/** Area weighted centre of a closed outline, where the extrude arrow sits. */
+export const outlineCentroid = (pts) => {
+  let a = 0, cx = 0, cy = 0
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i]
+    const [x1, y1] = pts[(i + 1) % pts.length]
+    const f = x0 * y1 - x1 * y0
+    a += f; cx += (x0 + x1) * f; cy += (y0 + y1) * f
+  }
+  if (Math.abs(a) < 1e-9) {
+    const n = pts.length || 1
+    return [pts.reduce((s, p) => s + p[0], 0) / n, pts.reduce((s, p) => s + p[1], 0) / n]
+  }
+  return [cx / (3 * a), cy / (3 * a)]
+}
+
 export const describeFeature = (f) => {
   const s = f.sketch
-  const shape = s.type === 'circle' ? `circle Ø${(s.r * 2).toFixed(1)}`
+  const shape = s.label ? s.label
+    : s.type === 'circle' ? `circle Ø${(s.r * 2).toFixed(1)}`
     : s.type === 'poly' ? `profile, ${s.points.length} pts`
     : `rect ${s.w.toFixed(1)}×${s.h.toFixed(1)}`
   return `${f.op === 'cut' ? 'Cut' : 'Add'} ${shape} · ${f.depth.toFixed(1)} mm`
@@ -147,13 +183,14 @@ export const bakeFeatures = (code, features, { autoPlace = true } = {}) => {
       : f.sketch.type === 'poly'
         ? `primitives.polygon({ points: [${f.sketch.points.map((p) => `[${num(p[0])}, ${num(p[1])}]`).join(', ')}] })`
         : `primitives.rectangle({ size: [${num(f.sketch.w)}, ${num(f.sketch.h)}], center: [${num(f.sketch.u)}, ${num(f.sketch.v)}] })`
-    const sink = f.op === 'cut' ? -f.depth : -0.2
+    const bleed = f.plane.ground ? 0 : 0.2
+    const sink = f.op === 'cut' ? -f.depth : -bleed
     const { u, v, normal: n, origin: o } = f.plane
     const matrix = `maths.mat4.fromValues(${vec(u).slice(1, -1)}, 0, ${vec(v).slice(1, -1)}, 0, ${vec(n).slice(1, -1)}, 0, ${vec(o).slice(1, -1)}, 1)`
     const boolOp = f.op === 'cut' ? 'subtract' : 'union'
     return `  // ${i + 1}. ${describeFeature(f)} on face ${describeNormal(n)}
   body = booleans.${boolOp}(body, transforms.transform(${matrix},
-    transforms.translateZ(${num(sink)}, extrusions.extrudeLinear({ height: ${num(f.depth + 0.2)} }, ${shape}))))`
+    transforms.translateZ(${num(sink)}, extrusions.extrudeLinear({ height: ${num(f.depth + bleed)} }, ${shape}))))`
   })
 
   return `${code.trimEnd()}

@@ -2,7 +2,8 @@ import { Component } from '@geajs/core'
 import ui from '../stores/ui-store.js'
 import model from '../stores/model-store.js'
 import sketch from '../stores/sketch-store.js'
-import { setTool, selectFace } from '../lib/scene.js'
+import * as sketcher from '../lib/sketcher.js'
+import RailItem from './rail-item.tsx'
 
 const PANELS = [
   { id: 'chat', label: 'Generate', icon: 'i-spark' },
@@ -11,26 +12,52 @@ const PANELS = [
   { id: 'print', label: 'Print', icon: 'i-printer' }
 ]
 
-/** Left tool rail in the Shapr3D manner: icon plus label, grouped. */
+/**
+ * Left tool rail. In model mode it opens the panels; in sketch mode the same
+ * rail turns into the sketch toolbox, the way Shapr3D swaps its left bar.
+ */
 export default class Rail extends Component {
   template() {
-    const { panel, sketchMode } = ui
+    const { panel, sketchMode, sectionOn } = ui
+    const { tool, rectMode, sides } = sketch
+
+    const sketchTools = [
+      { id: 'line', label: 'Line', sub: 'Click points', icon: 'i-line' },
+      { id: 'rect', label: 'Rectangle', sub: rectMode === 'center' ? 'From centre' : 'Two corners', icon: 'i-rect' },
+      { id: 'circle', label: 'Circle', sub: 'Centre, size', icon: 'i-circle' },
+      { id: 'polygon', label: 'Polygon', sub: `${sides} sides`, icon: 'i-polygon' },
+      { id: 'ellipse', label: 'Ellipse', sub: 'Centre, size', icon: 'i-ellipse' }
+    ]
+
     return (
-      <nav class="rail">
-        <div class="rail-group">
+      <nav class={`rail ${sketchMode ? 'sketching' : ''}`}>
+        <div class={`rail-group ${sketchMode ? 'hidden' : ''}`}>
           {PANELS.map((p) => (
-            <button key={p.id} class={`rail-btn ${panel === p.id ? 'on' : ''}`} click={() => ui.togglePanel(p.id)}>
-              <span class={`ico ${p.icon}`}></span>
-              <span class="rail-label">{p.label}</span>
-            </button>
+            <div key={p.id} class="rail-slot">
+              <RailItem label={p.label} icon={p.icon} active={panel === p.id} onPress={() => ui.togglePanel(p.id)} />
+            </div>
           ))}
         </div>
 
-        <div class="rail-group">
-          <button class={`rail-btn ${sketchMode ? 'on' : ''}`} click={() => this.toggleSketch()}>
-            <span class="ico i-sketch"></span>
-            <span class="rail-label">Sketch</span>
-          </button>
+        <div class={`rail-group ${sketchMode ? 'hidden' : ''}`}>
+          <RailItem label="Sketch" sub="Draw on a face" icon="i-sketch" active={false} onPress={() => this.enterSketch()} />
+        </div>
+
+        <div class={`rail-group ${sketchMode ? '' : 'hidden'}`}>
+          <RailItem label="Exit Sketching" sub="Back to the model" icon="i-close" active={false} onPress={() => this.exitSketch()} />
+        </div>
+
+        <div class={`rail-group ${sketchMode ? '' : 'hidden'}`}>
+          {sketchTools.map((t) => (
+            <div key={t.id} class="rail-slot">
+              <RailItem label={t.label} sub={t.sub} icon={t.icon} active={tool === t.id} onPress={() => this.pickTool(t.id)} />
+            </div>
+          ))}
+        </div>
+
+        <div class="rail-group rail-lower">
+          <RailItem label="Section View" sub={sectionOn ? 'On' : 'Off'} icon="i-section" active={sectionOn} onPress={() => this.toggleSection()} />
+          <RailItem label="Measure" sub={tool === 'measure' ? 'On' : 'Off'} icon="i-measure" active={tool === 'measure'} onPress={() => this.toggleMeasure()} />
         </div>
 
         <div class="rail-group rail-bottom">
@@ -45,15 +72,29 @@ export default class Rail extends Component {
     )
   }
 
-  toggleSketch() {
-    ui.sketchMode = !ui.sketchMode
-    if (!ui.sketchMode) {
-      // Leaving sketch mode drops any half drawn profile and the face pick.
-      sketch.cancel()
-      sketch.setTool('select')
-      setTool('select')
-      selectFace(null)
-    }
+  enterSketch() {
+    ui.sketchMode = true
+    sketcher.setTool('line')
+  }
+
+  exitSketch() {
+    ui.sketchMode = false
+    sketcher.exit()
+  }
+
+  pickTool(id) {
+    // A second click on the active tool switches its variant.
+    if (sketch.tool === id) sketcher.cycleOption(id)
+    else sketcher.setTool(id)
+  }
+
+  toggleMeasure() {
+    if (sketch.tool === 'measure') sketcher.setTool(ui.sketchMode ? 'line' : null)
+    else sketcher.setTool('measure')
+  }
+
+  toggleSection() {
+    ui.sectionOn = !ui.sectionOn
   }
 
   onKeydown = (event) => {

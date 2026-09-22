@@ -145,6 +145,10 @@ class ModelStore extends Store {
         autoPlace: settings.autoPlace,
         features: this.features
       })
+      // Newer input arrived while this build ran. Its result is already
+      // stale, and applying it would overwrite the newer parameter values,
+      // so skip it and let the queued build take over.
+      if (this.queued) return true
       this.paramDefs = result.paramDefs
       this.params = result.paramValues
       this.stats = result.stats

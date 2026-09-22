@@ -20,9 +20,9 @@ const TITLES = { chat: 'Generate', params: 'Parameters', code: 'Script', print: 
  */
 export default class App extends Component {
   template() {
-    const { panel } = ui
+    const { panel, sketchMode } = ui
     return (
-      <div class={`shell ${panel ? 'dock-open' : ''}`}>
+      <div class={`shell ${panel && !sketchMode ? 'dock-open' : ''} ${sketchMode ? 'sketching' : ''}`}>
         <Viewer />
         <ProjectBar />
         <Rail />

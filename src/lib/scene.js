@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Canvas2DRenderer } from './canvas2d-renderer.js'
-import { planeBasis, toPlane, fromPlane, sketchFromDrag, sketchOutline, snapPoint, segmentLength, segmentAngle, pointAt } from './features.js'
+import { planeBasis, toPlane } from './features.js'
 
 let renderer, scene, camera, controls
 let perspCamera, orthoCamera
@@ -24,13 +24,6 @@ let dirty = true
 
 // Picking and sketching state. Plain module state on purpose, see the header.
 let meshData = null          // { positions, planeIds, planes } of the current model
-let highlight = null         // mesh covering the hovered or selected planar face
-let preview = null           // line showing the sketch being dragged
-let pick = { enabled: false, tool: 'select', selected: null, hoverId: -1, onSelect: null, onSketch: null, onPoly: null }
-let drag = null
-
-// Polyline being drawn: committed points plus the rubber band cursor.
-let poly = null
 let overlay = null
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
@@ -359,6 +352,7 @@ export const setGeometry = (payload, { shading = 'studio', showWireframe = true 
   disposeObject(wireframe)
   mesh = null
   wireframe = null
+  applySection()   // drops the cap, it shares the geometry just disposed
   dirty = true
   if (!payload) return
 
@@ -367,9 +361,10 @@ export const setGeometry = (payload, { shading = 'studio', showWireframe = true 
   geometry.setAttribute('normal', new THREE.BufferAttribute(payload.normals, 3))
   geometry.computeBoundingSphere()
 
-  meshData = { positions: payload.positions, planeIds: payload.planeIds, planes: payload.planes }
-  setHighlight(null)
-  setPreview(null)
+  meshData = { positions: payload.positions, planeIds: payload.planeIds, planes: payload.planes, edges: payload.edgePositions, snaps: null }
+  // Face ids from the previous build mean nothing now.
+  highlightFace(null, 'hover')
+  highlightFace(null, 'active')
 
   meshMaterial = makeMaterial(shading)
   mesh = new THREE.Mesh(geometry, meshMaterial)
@@ -387,9 +382,17 @@ export const setGeometry = (payload, { shading = 'studio', showWireframe = true 
   )
   wireframe.visible = showWireframe
   modelGroup.add(wireframe)
+  applySection()
 }
 
-/* ---- face picking and sketching ------------------------------------- */
+/* ---- interaction primitives -----------------------------------------
+   The sketch, extrude and measure tools live in sketcher.js. This module only
+   offers what needs three.js: rays, face lookup, overlay drawing and screen
+   projection, so the tool logic stays readable on its own. */
+
+let hoverFaceMesh = null
+let activeFaceMesh = null
+const overlayParts = new Map()
 
 const facePlane = (planeId) => {
   const plane = meshData?.planes?.[planeId]
@@ -397,49 +400,67 @@ const facePlane = (planeId) => {
   return { id: planeId, ...planeBasis(plane.normal, plane.centroid), area: plane.area }
 }
 
-/** Draws a translucent copy of every triangle on the given plane. */
-const setHighlight = (planeId, strong = false) => {
-  disposeObject(highlight)
-  highlight = null
-  dirty = true
-  if (planeId == null || planeId < 0 || !meshData) return
+/** The build plate as a sketch plane: world X and Y, normal up. */
+export const groundPlane = () => ({ id: -1, origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0], area: Infinity })
 
+const faceMesh = (planeId, color, opacity) => {
+  if (planeId == null || planeId < 0 || !meshData) return null
   const { positions, planeIds } = meshData
   const picked = []
   for (let t = 0; t < planeIds.length; t++) {
     if (planeIds[t] !== planeId) continue
     for (let k = 0; k < 9; k++) picked.push(positions[t * 9 + k])
   }
-  if (picked.length === 0) return
-
+  if (picked.length === 0) return null
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(picked, 3))
-  highlight = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-    color: strong ? 0x3b82f6 : 0xffffff,
-    transparent: true,
-    opacity: strong ? 0.72 : 0.16,
-    toneMapped: false,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
-    side: THREE.DoubleSide
+  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, toneMapped: false, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide
   }))
-  overlay.add(highlight)
 }
 
-const setPreview = (sketch, plane) => {
-  disposeObject(preview)
-  preview = null
+/** 'hover' is the faint pre-selection, 'active' the face being sketched on. */
+export const highlightFace = (planeId, mode) => {
+  if (mode === 'hover') {
+    if (hoverFaceMesh?.userData.planeId === planeId) return
+    disposeObject(hoverFaceMesh)
+    hoverFaceMesh = faceMesh(planeId, 0xffffff, 0.14)
+    if (hoverFaceMesh) { hoverFaceMesh.userData.planeId = planeId; overlay.add(hoverFaceMesh) }
+  } else {
+    if (activeFaceMesh?.userData.planeId === planeId) return
+    disposeObject(activeFaceMesh)
+    activeFaceMesh = faceMesh(planeId, 0x3b82f6, 0.32)
+    if (activeFaceMesh) { activeFaceMesh.userData.planeId = planeId; overlay.add(activeFaceMesh) }
+  }
   dirty = true
-  if (!sketch || !plane) return
-  const pts = sketchOutline(sketch).map(([u, v]) => new THREE.Vector3(...fromPlane(plane, u, v, 0.15)))
-  preview = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: 0x9cc2ff, depthTest: false, toneMapped: false })
-  )
-  preview.renderOrder = 10
-  overlay.add(preview)
+}
+
+/** Named overlay slots: setting a name replaces whatever was there. */
+export const setOverlay = (name, object) => {
+  disposeTree(overlayParts.get(name))
+  overlayParts.delete(name)
+  if (object) {
+    overlayParts.set(name, object)
+    overlay.add(object)
+  }
+  dirty = true
+}
+
+export const clearOverlay = () => {
+  for (const name of [...overlayParts.keys()]) setOverlay(name, null)
+  highlightFace(null, 'hover')
+  highlightFace(null, 'active')
+}
+
+const disposeTree = (object) => {
+  if (!object) return
+  object.traverse((o) => {
+    o.geometry?.dispose()
+    if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose())
+    else o.material?.dispose()
+  })
+  object.parent?.remove(object)
 }
 
 const updatePointer = (event) => {
@@ -447,233 +468,251 @@ const updatePointer = (event) => {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
   raycaster.setFromCamera(pointer, camera)
+  return raycaster
 }
 
-const hitModel = () => {
+/** Model surface under the pointer, with the planar face it belongs to. */
+export const pickModel = (event) => {
   if (!mesh) return null
-  const hits = raycaster.intersectObject(mesh, false)
-  return hits.length ? hits[0] : null
+  updatePointer(event)
+  const hit = raycaster.intersectObject(mesh, false)[0]
+  if (!hit) return null
+  const planeId = meshData.planeIds[hit.faceIndex]
+  const p = meshData.positions
+  const t = hit.faceIndex * 9
+  return {
+    point: hit.point.toArray(),
+    planeId,
+    plane: facePlane(planeId),
+    triangle: [[p[t], p[t + 1], p[t + 2]], [p[t + 3], p[t + 4], p[t + 5]], [p[t + 6], p[t + 7], p[t + 8]]]
+  }
 }
 
-/** Where the pointer ray crosses the selected face's infinite plane, in (u, v). */
-const hitPlane = (plane) => {
+/**
+ * Corners and edge midpoints of the real feature edges, built once per model.
+ * Measuring snaps to these, so it hits a corner even where the ray itself
+ * would slip past the silhouette.
+ */
+export const snapPoints = () => {
+  if (!meshData?.edges) return []
+  if (meshData.snaps) return meshData.snaps
+  const e = meshData.edges
+  const seen = new Set()
+  const out = []
+  const add = (x, y, z, kind) => {
+    const k = `${Math.round(x * 1e3)},${Math.round(y * 1e3)},${Math.round(z * 1e3)}`
+    if (seen.has(k)) return
+    seen.add(k)
+    out.push({ point: [x, y, z], kind })
+  }
+  for (let i = 0; i < e.length; i += 6) {
+    add(e[i], e[i + 1], e[i + 2], 'corner')
+    add(e[i + 3], e[i + 4], e[i + 5], 'corner')
+    add((e[i] + e[i + 3]) / 2, (e[i + 1] + e[i + 4]) / 2, (e[i + 2] + e[i + 5]) / 2, 'mid')
+  }
+  meshData.snaps = out
+  return out
+}
+
+export const cameraPosition = () => camera.position.toArray()
+
+/** Where the pointer ray meets a sketch plane, in that plane's (u, v). */
+export const pointOnPlane = (event, plane) => {
+  updatePointer(event)
   const p = new THREE.Plane().setFromNormalAndCoplanarPoint(
     new THREE.Vector3(...plane.normal), new THREE.Vector3(...plane.origin)
   )
-  const point = raycaster.ray.intersectPlane(p, new THREE.Vector3())
-  return point ? toPlane(plane, point.toArray()) : null
+  const hit = raycaster.ray.intersectPlane(p, new THREE.Vector3())
+  return hit ? toPlane(plane, hit.toArray()) : null
 }
 
-/** Redraws the polyline plus its rubber band segment. */
-const drawPoly = () => {
-  disposeObject(preview)
-  preview = null
-  dirty = true
-  if (!poly || !pick.selected) return
-
-  const pts = [...poly.points]
-  if (poly.cursor) pts.push(poly.cursor)
-  if (pts.length < 2) {
-    // A single placed point still needs to be visible.
-    if (pts.length === 1) {
-      const p = new THREE.Vector3(...fromPlane(pick.selected, pts[0][0], pts[0][1], 0.2))
-      preview = new THREE.Points(
-        new THREE.BufferGeometry().setFromPoints([p]),
-        new THREE.PointsMaterial({ color: 0x9cc2ff, size: 7, sizeAttenuation: false, depthTest: false, toneMapped: false })
-      )
-      preview.renderOrder = 10
-      overlay.add(preview)
-    }
-    return
-  }
-
-  const world = pts.map(([u, v]) => new THREE.Vector3(...fromPlane(pick.selected, u, v, 0.2)))
-  if (poly.closing && poly.points.length > 2) world.push(world[0])
-  preview = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(world),
-    new THREE.LineBasicMaterial({ color: poly.closing ? 0x3fb950 : 0x9cc2ff, depthTest: false, toneMapped: false })
-  )
-  preview.renderOrder = 10
-  overlay.add(preview)
-}
-
-const CLOSE_TOLERANCE = 2.5
-
-const reportPoly = () => {
-  if (!pick.onPoly) return
-  const last = poly?.points[poly.points.length - 1]
-  pick.onPoly({
-    points: poly ? poly.points.map((p) => [...p]) : [],
-    cursor: poly?.cursor ? [...poly.cursor] : null,
-    length: last && poly?.cursor ? segmentLength(last, poly.cursor) : 0,
-    angle: last && poly?.cursor ? segmentAngle(last, poly.cursor) : 0,
-    closing: Boolean(poly?.closing)
-  })
-}
-
-/** Places the next polyline point, or closes the profile when back at the start. */
-const addPolyPoint = (uv) => {
-  if (!poly) poly = { points: [], cursor: null, closing: false }
-  if (poly.points.length > 2 && segmentLength(poly.points[0], uv) <= CLOSE_TOLERANCE) {
-    return finishPoly()
-  }
-  poly.points.push(uv)
-  poly.cursor = null
-  drawPoly()
-  reportPoly()
-}
-
-export const finishPoly = () => {
-  if (!poly || poly.points.length < 3) return false
-  const points = poly.points.map((p) => [...p])
-  const plane = pick.selected
-  poly = null
-  drawPoly()
-  reportPoly()
-  pick.onSketch?.({ type: 'poly', points }, plane)
-  return true
-}
-
-export const cancelPoly = () => {
-  poly = null
-  drawPoly()
-  reportPoly()
-}
-
-/** Commits the pending segment at an exact length, optionally an exact angle. */
-export const commitExactSegment = (lengthMm, angleDeg) => {
-  if (!poly || poly.points.length === 0 || !lengthMm) return false
-  const from = poly.points[poly.points.length - 1]
-  const angle = angleDeg == null
-    ? (poly.cursor ? segmentAngle(from, poly.cursor) : 0)
-    : angleDeg
-  addPolyPoint(pointAt(from, lengthMm, angle))
-  return true
-}
-
-export const undoPolyPoint = () => {
-  if (!poly || poly.points.length === 0) return
-  poly.points.pop()
-  if (poly.points.length === 0) poly = null
-  drawPoly()
-  reportPoly()
-}
-
-const onPointerDown = (event) => {
-  if (!pick.enabled || event.button !== 0) return
+/** The pointer ray itself, for the extrude drag. */
+export const pointerRay = (event) => {
   updatePointer(event)
-  // The polyline is click to place, so it must not lock the orbit controls.
-  if (pick.tool === 'line' && pick.selected) {
-    drag = { kind: 'maybe-point', x: event.clientX, y: event.clientY }
-    return
-  }
-
-  const sketching = pick.tool !== 'select' && pick.selected
-  if (sketching) {
-    const start = hitPlane(pick.selected)
-    if (!start) return
-    // The drag belongs to the sketch now, not to the camera.
-    controls.enabled = false
-    drag = { kind: 'sketch', start, sketch: null }
-    event.preventDefault()
-    return
-  }
-  drag = { kind: 'maybe-select', x: event.clientX, y: event.clientY }
+  return { origin: raycaster.ray.origin.toArray(), dir: raycaster.ray.direction.toArray() }
 }
 
-const onPointerMove = (event) => {
-  if (!pick.enabled) return
-  updatePointer(event)
-
-  if (pick.tool === 'line' && pick.selected && (!drag || drag.kind === 'maybe-point')) {
-    const raw = hitPlane(pick.selected)
-    if (!raw) return
-    if (!poly) poly = { points: [], cursor: null, closing: false }
-    const from = poly.points[poly.points.length - 1] || null
-    poly.cursor = snapPoint(from, raw)
-    poly.closing = poly.points.length > 2 && segmentLength(poly.points[0], poly.cursor) <= CLOSE_TOLERANCE
-    drawPoly()
-    reportPoly()
-    return
-  }
-
-  if (drag?.kind === 'sketch') {
-    const now = hitPlane(pick.selected)
-    if (!now) return
-    drag.sketch = sketchFromDrag(pick.tool, drag.start, now)
-    setPreview(drag.sketch, pick.selected)
-    return
-  }
-
-  // Hover feedback while nothing is being dragged.
-  if (drag) return
-  const hit = hitModel()
-  const id = hit ? meshData?.planeIds[hit.faceIndex] : -1
-  if (id !== pick.hoverId) {
-    pick.hoverId = id
-    if (pick.selected?.id !== id) setHighlight(id, false)
-    else setHighlight(id, true)
-    renderer.domElement.style.cursor = id >= 0 ? (pick.tool === 'select' ? 'pointer' : 'crosshair') : ''
-  }
-}
-
-const onPointerUp = (event) => {
-  if (!pick.enabled || !drag) return
-  const current = drag
-  drag = null
-
-  if (current.kind === 'maybe-point') {
-    const moved = Math.hypot(event.clientX - current.x, event.clientY - current.y)
-    if (moved > 4) return          // that was an orbit, not a click
-    updatePointer(event)
-    const raw = hitPlane(pick.selected)
-    if (!raw) return
-    const from = poly?.points[poly.points.length - 1] || null
-    addPolyPoint(snapPoint(from, raw))
-    return
-  }
-
-  if (current.kind === 'sketch') {
-    controls.enabled = true
-    setPreview(null)
-    if (current.sketch) pick.onSketch?.(current.sketch, pick.selected)
-    return
-  }
-
-  // A real orbit drag must not count as a click.
-  const moved = Math.hypot(event.clientX - current.x, event.clientY - current.y)
-  if (moved > 4) return
-  updatePointer(event)
-  const hit = hitModel()
-  const id = hit ? meshData.planeIds[hit.faceIndex] : -1
-  selectFace(id >= 0 ? id : null)
-}
-
-export const selectFace = (planeId) => {
-  poly = null
-  drawPoly()
-  pick.selected = planeId == null ? null : facePlane(planeId)
-  setHighlight(pick.selected ? pick.selected.id : null, true)
-  pick.onSelect?.(pick.selected)
-}
-
-/** Switches picking on and wires the callbacks the store listens to. */
-export const enablePicking = ({ onSelect, onSketch, onPoly }) => {
-  pick.enabled = true
-  pick.onSelect = onSelect
-  pick.onSketch = onSketch
-  pick.onPoly = onPoly
+/** World point to canvas pixels. */
+export const toScreen = (world) => {
+  const v = new THREE.Vector3(...world).project(camera)
   const el = renderer.domElement
-  el.addEventListener('pointerdown', onPointerDown)
-  el.addEventListener('pointermove', onPointerMove)
-  el.addEventListener('pointerup', onPointerUp)
-  el.addEventListener('pointerleave', () => { if (!drag) { pick.hoverId = -1; if (!pick.selected) setHighlight(null) } })
+  return {
+    x: (v.x * 0.5 + 0.5) * el.clientWidth,
+    y: (-v.y * 0.5 + 0.5) * el.clientHeight,
+    visible: v.z > -1 && v.z < 1
+  }
 }
 
-export const setTool = (tool) => {
-  pick.tool = tool
-  cancelPoly()
-  if (pick.selected) setHighlight(pick.selected.id, true)
+/** Roughly how many millimetres one screen pixel covers at a world point. */
+export const mmPerPixel = (world) => {
+  const el = renderer.domElement
+  if (orthographic) return (orthoCamera.top - orthoCamera.bottom) / (el.clientHeight || 1)
+  const distance = camera.position.distanceTo(new THREE.Vector3(...world))
+  return (2 * distance * Math.tan((perspCamera.fov * Math.PI) / 360)) / (el.clientHeight || 1)
+}
+
+export const setControlsEnabled = (enabled) => { if (controls) controls.enabled = enabled }
+
+export const canvasElement = () => renderer?.domElement
+
+/** Pointer events on the canvas, for the tool controller. Returns an unsubscribe. */
+export const addPointerListeners = ({ down, move, up, leave }) => {
+  const el = renderer.domElement
+  if (down) el.addEventListener('pointerdown', down)
+  if (move) el.addEventListener('pointermove', move)
+  if (up) el.addEventListener('pointerup', up)
+  if (leave) el.addEventListener('pointerleave', leave)
+  return () => {
+    if (down) el.removeEventListener('pointerdown', down)
+    if (move) el.removeEventListener('pointermove', move)
+    if (up) el.removeEventListener('pointerup', up)
+    if (leave) el.removeEventListener('pointerleave', leave)
+  }
+}
+
+export const setCursor = (cursor) => { if (renderer) renderer.domElement.style.cursor = cursor || '' }
+
+/* ---- overlay builders ------------------------------------------------- */
+
+const SKETCH_BLUE = 0x6ea8ff
+
+export const makePolyline = (points, { color = SKETCH_BLUE, closed = false, opacity = 1 } = {}) => {
+  const pts = points.map((p) => new THREE.Vector3(...p))
+  if (closed && pts.length > 2) pts.push(pts[0].clone())
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color, depthTest: false, toneMapped: false, transparent: opacity < 1, opacity })
+  )
+  line.renderOrder = 20
+  return line
+}
+
+export const makeDots = (points, { color = 0xffffff, size = 8 } = {}) => {
+  const dots = new THREE.Points(
+    new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p))),
+    new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, toneMapped: false })
+  )
+  dots.renderOrder = 21
+  return dots
+}
+
+/** 2D outline in plane coordinates to a THREE.Shape. */
+const shapeFrom = (outline) => {
+  const shape = new THREE.Shape()
+  outline.forEach(([u, v], i) => (i === 0 ? shape.moveTo(u, v) : shape.lineTo(u, v)))
+  shape.closePath()
+  return shape
+}
+
+const planeMatrix = (plane) => new THREE.Matrix4().set(
+  plane.u[0], plane.v[0], plane.normal[0], plane.origin[0],
+  plane.u[1], plane.v[1], plane.normal[1], plane.origin[1],
+  plane.u[2], plane.v[2], plane.normal[2], plane.origin[2],
+  0, 0, 0, 1
+)
+
+/** Filled translucent profile lying on its plane. */
+export const makeRegion = (outline, plane, { color = 0x3b82f6, opacity = 0.28 } = {}) => {
+  const mesh = new THREE.Mesh(
+    new THREE.ShapeGeometry(shapeFrom(outline)),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, toneMapped: false })
+  )
+  mesh.applyMatrix4(planeMatrix(plane))
+  mesh.translateZ(0.06)
+  mesh.renderOrder = 15
+  return mesh
+}
+
+/** Live extrusion preview: positive depth grows along the normal, negative cuts in. */
+export const makeExtrudePreview = (outline, plane, depth, { color } = {}) => {
+  const group = new THREE.Group()
+  if (Math.abs(depth) < 1e-6) return group
+  const geometry = new THREE.ExtrudeGeometry(shapeFrom(outline), { depth: Math.abs(depth), bevelEnabled: false, curveSegments: 48 })
+  if (depth < 0) geometry.translate(0, 0, depth)
+  const tint = color ?? (depth > 0 ? 0x3b82f6 : 0xf0524d)
+  const body = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    color: tint, transparent: true, opacity: 0.3, depthWrite: false, toneMapped: false, side: THREE.DoubleSide
+  }))
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry, 30),
+    new THREE.LineBasicMaterial({ color: tint, toneMapped: false, depthTest: false, transparent: true, opacity: 0.9 })
+  )
+  body.renderOrder = 16
+  edges.renderOrder = 22
+  group.add(body, edges)
+  group.applyMatrix4(planeMatrix(plane))
+  return group
+}
+
+/**
+ * Drag handle for the extrusion: shaft plus cone along the normal, and a fat
+ * invisible cylinder so it is easy to grab. Sized in screen pixels so it looks
+ * the same at any zoom.
+ */
+export const makeArrow = (origin, normal, { color = 0x3b82f6 } = {}) => {
+  const scale = mmPerPixel(origin)
+  const len = 64 * scale
+  const group = new THREE.Group()
+  const mat = new THREE.MeshBasicMaterial({ color, toneMapped: false, depthTest: false })
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.4 * scale, 1.4 * scale, len * 0.72, 12), mat)
+  shaft.position.y = len * 0.36
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(6 * scale, len * 0.3, 20), mat)
+  cone.position.y = len * 0.86
+  const grip = new THREE.Mesh(
+    new THREE.CylinderGeometry(9 * scale, 9 * scale, len * 1.05, 10),
+    new THREE.MeshBasicMaterial({ visible: false })
+  )
+  grip.position.y = len * 0.5
+  grip.name = 'grip'
+  shaft.renderOrder = cone.renderOrder = 25
+  group.add(shaft, cone, grip)
+  // Cylinders point along +Y, rotate that onto the normal.
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...normal))
+  group.position.set(...origin)
+  group.userData.tip = [origin[0] + normal[0] * len, origin[1] + normal[1] * len, origin[2] + normal[2] * len]
+  return group
+}
+
+export const hitsObject = (event, object) => {
+  if (!object) return false
+  updatePointer(event)
+  return raycaster.intersectObject(object, true).length > 0
+}
+
+/* ---- section view ------------------------------------------------------ */
+
+const sectionPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)
+let sectionState = { enabled: false, axis: 'z', position: 0 }
+let sectionCap = null
+
+const AXIS = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }
+
+/** Applies the clip to whatever materials the model currently has. */
+const applySection = () => {
+  if (!renderer || software) return
+  const planes = sectionState.enabled ? [sectionPlane] : []
+  renderer.localClippingEnabled = sectionState.enabled
+  if (mesh) { mesh.material.clippingPlanes = planes; mesh.material.needsUpdate = true }
+  if (wireframe) { wireframe.material.clippingPlanes = planes; wireframe.material.needsUpdate = true }
+  if (sectionCap) { sectionCap.material.dispose(); sectionCap.parent?.remove(sectionCap) }
+  sectionCap = null
+  if (sectionState.enabled && mesh) {
+    // The inside of a solid is its back faces. Drawn flat in a cut colour
+    // they read as a solid section surface without computing a real cap.
+    sectionCap = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial({
+      color: 0x6f7fa3, side: THREE.BackSide, clippingPlanes: planes, toneMapped: false
+    }))
+    modelGroup.add(sectionCap)
+  }
+  dirty = true
+}
+
+/** Keeps everything on the low side of `position` along `axis`. */
+export const setSection = ({ enabled, axis = 'z', position = 0 }) => {
+  sectionState = { enabled, axis, position }
+  const n = AXIS[axis] || AXIS.z
+  sectionPlane.set(new THREE.Vector3(-n[0], -n[1], -n[2]), position)
+  applySection()
 }
 
 export const setOverlayVisible = (visible) => {
@@ -681,13 +720,11 @@ export const setOverlayVisible = (visible) => {
   dirty = true
 }
 
-/** Draws a committed or pending sketch outline without a drag going on. */
-export const showSketch = (sketch, plane) => setPreview(sketch, plane)
-
 export const setShading = (shading) => {
   if (!mesh) return
   mesh.material.dispose()
   mesh.material = makeMaterial(shading)
+  applySection()
   dirty = true
 }
 

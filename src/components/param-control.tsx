@@ -1,4 +1,5 @@
 import model from '../stores/model-store.js'
+import { splitCaption, bounds, format, setSoon, setNow, onKeydown } from '../lib/param-input.js'
 
 /**
  * One control for one script parameter. This lives in its own function
@@ -9,9 +10,8 @@ export default function ParamControl({ def, value }) {
   const type = def.type || 'float'
   const numeric = type !== 'checkbox' && type !== 'choice' && type !== 'text'
 
-  const min = def.min ?? 0
-  const max = def.max ?? Math.max(100, Number(value) * 2 || 100)
-  const step = def.step ?? (type === 'int' ? 1 : 0.1)
+  const { min, max, step } = bounds(def, value)
+  const { unit } = splitCaption(def)
   const values = def.values || []
   const captions = def.captions || values
 
@@ -45,8 +45,8 @@ export default function ParamControl({ def, value }) {
         />
       )}
 
-      {/* A bare slider is useless when someone needs 6.35 mm on the nose, so
-          numbers get the slider and an exact box side by side. */}
+      {/* Slider for feel, the unit box for exact numbers: typing rebuilds
+          after a short pause, Enter at once, arrow keys step. */}
       {numeric && (
         <div class="param-number">
           <input
@@ -57,15 +57,17 @@ export default function ParamControl({ def, value }) {
             value={Number(value ?? min)}
             input={(e) => model.setParam(def.name, Number(e.target.value))}
           />
-          <input
-            type="number"
-            class="param-exact"
-            min={min}
-            max={max}
-            step={step}
-            value={Number(value ?? min)}
-            change={(e) => model.setParam(def.name, Number(e.target.value))}
-          />
+          <label class="unit-input">
+            <input
+              type="text"
+              inputmode="decimal"
+              value={format(def, value)}
+              input={(e) => setSoon(def, e.target.value)}
+              change={(e) => setNow(def, e.target.value)}
+              keydown={(e) => onKeydown(e, def, value)}
+            />
+            <span>{unit}</span>
+          </label>
         </div>
       )}
     </div>

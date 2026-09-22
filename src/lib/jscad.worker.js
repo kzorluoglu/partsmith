@@ -320,7 +320,9 @@ const buildTool = (feature) => {
 
   // Sink the tool 0.2 mm into the body so no face ends up coplanar with the
   // one it was sketched on, that is the classic source of broken CSG output.
-  const bleed = 0.2
+  // On the build plate there is nothing to sink into, a bleed there would
+  // push the part 0.2 mm below the bed.
+  const bleed = plane.ground ? 0 : 0.2
   let solid = extrusions.extrudeLinear({ height: depth + bleed }, shape)
   solid = transforms.translateZ(op === 'cut' ? -depth : -bleed, solid)
 

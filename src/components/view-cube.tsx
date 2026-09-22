@@ -41,23 +41,13 @@ export default class ViewCube extends Component {
     )
   }
 
-  /**
-   * The element to drive. Gea may render this subtree more than once while
-   * the viewer mounts, and then the ref can point at a node that never makes
-   * it into the page, so fall back to the one that is actually attached.
-   */
-  cube() {
-    if (this.cubeEl?.isConnected) return this.cubeEl
-    return document.querySelector('.viewcube-cube')
-  }
-
   onAfterRender() {
     let latest = null
 
     // Container = flip(Y) * view rotation. The view matrix maps world into
     // camera space (y up), CSS space has y down, hence the flip.
     const apply = () => {
-      const el = this.cube()
+      const el = this.cubeEl
       if (!el) return
       // Face transforms are static; set them on whichever node is live.
       if (!el.dataset.faces) {
@@ -77,8 +67,7 @@ export default class ViewCube extends Component {
       latest = Array.from(e)
       apply()
     })
-    // The first call can land before this subtree is attached, and the camera
-    // only notifies on change, so apply again once the page has settled.
+    // Harmless safety net: re-apply once the page has settled.
     requestAnimationFrame(apply)
     setTimeout(apply, 250)
   }

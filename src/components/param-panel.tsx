@@ -2,6 +2,7 @@ import { Component } from '@geajs/core'
 import ParamControl from './param-control.tsx'
 import FeaturePanel from './feature-panel.tsx'
 import model from '../stores/model-store.js'
+import { splitCaption, startScrub } from '../lib/param-input.js'
 
 /** Renders the script's getParameterDefinitions() as live controls. */
 export default class ParamPanel extends Component {
@@ -23,9 +24,13 @@ export default class ParamPanel extends Component {
         <div class="param-list">
           {usable.map((def) => (
             <div key={def.name} class="param">
-              <label class="param-label">
-                <span>{def.caption || def.name}</span>
-                <span class="param-value">{formatValue(def, params[def.name])}</span>
+              <label
+                class={`param-label ${isNumeric(def) ? 'scrub' : ''}`}
+                title={isNumeric(def) ? 'Drag sideways to change, Shift for big steps' : ''}
+                pointerdown={(e) => { if (isNumeric(def)) startScrub(e, def, params[def.name]) }}
+              >
+                <span>{splitCaption(def).label}</span>
+                {isNumeric(def) && <span class="param-range">{rangeText(def)}</span>}
               </label>
               <ParamControl def={def} value={params[def.name]} />
             </div>
@@ -37,9 +42,6 @@ export default class ParamPanel extends Component {
   }
 }
 
-const formatValue = (def, value) => {
-  if (def.type === 'checkbox') return value ? 'on' : 'off'
-  if (def.type === 'choice' || def.type === 'text') return ''
-  const number = Number(value ?? 0)
-  return Number.isInteger(number) ? String(number) : number.toFixed(2)
-}
+const isNumeric = (def) => !['checkbox', 'choice', 'text'].includes(def.type)
+
+const rangeText = (def) => (def.min != null && def.max != null ? `${def.min}–${def.max}` : '')
