@@ -3,6 +3,7 @@ import { getApiKey, setApiKey, listModels, streamCompletion, fetchCredits } from
 import { SYSTEM_PROMPT, contextMessage, repairMessage, extractCode } from '../lib/prompt.js'
 import settings from './settings-store.js'
 import model from './model-store.js'
+import { emit } from '../lib/bus.js'
 
 const MODEL_STORAGE = 'partsmith.model'
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5'
@@ -152,7 +153,9 @@ class AiStore extends Store {
     if (!model.name || model.name === 'model') model.name = userText.slice(0, 40)
 
     const ok = await model.run()
-    if (ok) return
+    // A new part from the model can be a very different size from the last
+    // one, so frame it instead of leaving the camera where it was.
+    if (ok) { emit('fit-view'); return }
 
     // The script threw. Hand the error back once and rerun.
     this.messages = [...this.messages, { role: 'note', content: `Script failed: ${model.error}. Asking the model to fix it.`, at: Date.now() }]
@@ -163,7 +166,7 @@ class AiStore extends Store {
     const fixedCode = extractCode(fixed)
     model.setCode(fixedCode)
     this.messages = [...this.messages, { role: 'assistant', content: fixedCode, at: Date.now() }]
-    await model.run()
+    if (await model.run()) emit('fit-view')
   }
 
   clear() {

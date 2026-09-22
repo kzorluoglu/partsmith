@@ -7,10 +7,8 @@
 
 ![PartSmith](docs/demo.gif)
 
-*Orbiting with the view cube, scrubbing a parameter, then a base plate sketched on the grid,
-typed to 30 × 20 mm and pulled up 2 mm, two holes cut into it and the plate measured. The AI
-prompt sits in the bar at the bottom; generating needs your own OpenRouter key, so this clip
-starts from the built in example part.*
+*Describe the part in plain words, the script streams in, the solid is built and checked,
+then one parameter turns four compartments into eight.*
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![no backend](https://img.shields.io/badge/backend-none-brightgreen)
@@ -40,6 +38,11 @@ your prompt ──▶ LLM writes a JSCAD script ──▶ real solid geometry
 ## Sketch and extrude
 
 The AI writes the base part, then you shape it by hand like in Shapr3D:
+
+![Sketching a base plate and cutting holes](docs/sketch.gif)
+
+*A base plate sketched on the grid, typed to 30 × 20 mm, pulled up 2 mm, two holes cut
+into it and the plate measured.*
 
 1. **Sketch** in the left rail turns the rail into the sketch toolbox: Line,
    Rectangle, Circle, Polygon, Ellipse. Clicking the active tool again switches

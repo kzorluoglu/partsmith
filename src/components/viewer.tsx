@@ -85,6 +85,8 @@ export default class Viewer extends Component {
 
       sketcher.init(this.pillLayer)
 
+      this.offFit = on('fit-view', () => frameModel(model.stats))
+
       this.offPrinter = settings.observe('printerId', () => buildPlate(settings.printer.volume))
       this.offShading = settings.observe('shading', () => setShading(settings.shading))
       this.software = isSoftware()
@@ -97,6 +99,7 @@ export default class Viewer extends Component {
 
   dispose() {
     this.offGeometry?.()
+    this.offFit?.()
     this.offPrinter?.()
     this.offShading?.()
     if (!this.glError) destroyScene()

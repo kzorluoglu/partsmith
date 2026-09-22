@@ -67,6 +67,10 @@ export default class ChatPanel extends Component {
   scrollDown() {
     requestAnimationFrame(() => {
       if (this.logEl) this.logEl.scrollTop = this.logEl.scrollHeight
+      // Follow the script as it streams in, otherwise only its first lines
+      // are ever visible while the rest arrives below the fold.
+      const live = this.logEl?.querySelector('.streaming .msg-code')
+      if (live) live.scrollTop = live.scrollHeight
     })
   }
 
