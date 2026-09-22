@@ -7,6 +7,7 @@
 
 const BASE = 'https://openrouter.ai/api/v1'
 const KEY_STORAGE = 'partsmith.openrouter.key'
+const MAX_TOKENS = 8192
 
 export const getApiKey = () => {
   try {
@@ -41,7 +42,7 @@ const readError = async (response) => {
     detail = await response.text().catch(() => '')
   }
   if (response.status === 401) return 'OpenRouter rejected the key (401). Check it in settings.'
-  if (response.status === 402) return 'OpenRouter reports no credit left (402).'
+  if (response.status === 402) return `OpenRouter needs more credit for this request (402). ${detail}`.trim()
   if (response.status === 429) return 'Rate limited by OpenRouter (429). Wait a moment or pick another model.'
   return `OpenRouter request failed (${response.status}) ${detail}`.trim()
 }
@@ -84,7 +85,11 @@ export const streamCompletion = async ({ key, model, messages, signal, onDelta, 
     method: 'POST',
     headers: headers(key),
     signal,
-    body: JSON.stringify({ model, messages, temperature, stream: true })
+    // Without max_tokens OpenRouter reserves credit for the model's full
+    // output limit (64k tokens on Sonnet, roughly a dollar) and answers 402
+    // on a small balance, although a script costs a few cents. 8k tokens is
+    // several times the longest script the prompt allows.
+    body: JSON.stringify({ model, messages, temperature, stream: true, max_tokens: MAX_TOKENS })
   })
 
   if (!response.ok) throw new Error(await readError(response))

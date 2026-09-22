@@ -36,6 +36,20 @@
 }
 
 * { box-sizing: border-box; }
+
+/* The app is dark only. Without this Firefox falls back to light native
+   scrollbars on a light system theme: white gutters in every dark panel. */
+:root { color-scheme: dark; }
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.16) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
 html, body, #app { height: 100%; margin: 0; }
 
 body {

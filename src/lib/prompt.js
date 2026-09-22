@@ -42,19 +42,26 @@ maths: vec2, vec3, mat4
 Notes that trip people up: \`cylinder({ radius, height, segments })\` is centred on the origin.
 \`cuboid({ size: [x, y, z] })\` is centred too, \`translate\` it if you need a corner at the origin.
 \`rotate\` takes radians, so wrap degrees in \`utils.degToRad(45)\`.
+\`roundedCuboid\` rounds every edge, top and bottom included, and throws unless \`roundRadius\` is
+smaller than half of its smallest size, height included. For boxes, trays and plates that only need
+rounded vertical corners, extrude a \`roundedRectangle\` instead, and clamp its \`roundRadius\` below
+half of its shorter side.
 
 PRINTABILITY RULES
-1. Build a single watertight solid. No coincident faces and no zero thickness: when subtracting a
+1. Order the booleans: subtract cavities and holes from the outer body first, then union the inner
+   features (dividers, ribs, bosses) into the result. Subtracting last cuts those features away again.
+   Recesses on the underside must stay shallower than the floor, or the floor opens up.
+2. Build a single watertight solid. No coincident faces and no zero thickness: when subtracting a
    through hole, make the cutting tool 0.2 mm longer on each side so the faces do not touch.
-2. Walls at least 1.2 mm, free standing pins at least 2 mm, no feature below 0.4 mm.
-3. Keep overhangs at 45 degrees or steeper from horizontal. Chamfer or add a 45 degree fillet under
+3. Walls at least 1.2 mm, free standing pins at least 2 mm, no feature below 0.4 mm.
+4. Keep overhangs at 45 degrees or steeper from horizontal. Chamfer or add a 45 degree fillet under
    horizontal overhangs instead of expecting support material.
-4. Orient the part so the largest flat face is the bottom and it sits on z = 0.
-5. Clearance for parts that must fit together: 0.2 mm loose fit, 0.1 mm press fit. Add it as a parameter.
-6. Use \`segments: 64\` for visible round features, \`segments: 32\` for small ones. Do not go above 128,
+5. Orient the part so the largest flat face is the bottom and it sits on z = 0.
+6. Clearance for parts that must fit together: 0.2 mm loose fit, 0.1 mm press fit. Add it as a parameter.
+7. Use \`segments: 64\` for visible round features, \`segments: 32\` for small ones. Do not go above 128,
    the triangle count explodes.
-7. Prefer chamfers over fillets on bottom edges, a 0.6 mm chamfer kills elephant foot.
-8. Keep the whole part inside the stated build volume.
+8. Prefer chamfers over fillets on bottom edges, a 0.6 mm chamfer kills elephant foot.
+9. Keep the whole part inside the stated build volume.
 
 STYLE
 Give the script a short header comment naming the part and its intended use.

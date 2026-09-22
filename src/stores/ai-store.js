@@ -17,6 +17,7 @@ class AiStore extends Store {
   messages = []
   draft = ''
   streaming = false
+  busy = false            // the whole request, repair attempt included
   streamText = ''
   error = ''
   credits = null
@@ -130,9 +131,10 @@ class AiStore extends Store {
    */
   async send(text) {
     const userText = (text ?? this.draft).trim()
-    if (!userText || this.streaming) return
+    if (!userText || this.busy) return
     this.draft = ''
     this.error = ''
+    this.busy = true
     this.messages = [...this.messages, { role: 'user', content: userText, at: Date.now() }]
 
     try {
@@ -143,6 +145,8 @@ class AiStore extends Store {
       if (error.name === 'AbortError') return
       this.error = error.message
       this.messages = [...this.messages, { role: 'error', content: error.message, at: Date.now() }]
+    } finally {
+      this.busy = false
     }
   }
 

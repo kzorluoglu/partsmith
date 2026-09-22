@@ -9,7 +9,7 @@ export default class PromptBar extends Component {
   inputEl = null
 
   template() {
-    const { streaming, ready } = ai
+    const { streaming, busy, ready } = ai
     return (
       <form class="promptbar" submit={this.submit}>
         <span class="ico i-spark promptbar-mark"></span>
@@ -25,7 +25,7 @@ export default class PromptBar extends Component {
         <span class="promptbar-model" title="Model, change it in settings">{ai.modelId.split('/').pop()}</span>
         {streaming
           ? <button type="button" class="round-btn danger" title="Stop" click={() => ai.abort()}><span class="ico sm i-stop"></span></button>
-          : <button type="submit" class="round-btn" title="Generate (Enter)" disabled={model.running}><span class="ico sm i-send"></span></button>}
+          : <button type="submit" class="round-btn" title="Generate (Enter)" disabled={model.running || busy}><span class="ico sm i-send"></span></button>}
       </form>
     )
   }
