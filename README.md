@@ -7,8 +7,10 @@
 
 ![PartSmith](docs/demo.gif)
 
-*Adjusting a parameter, orbiting the solid, and the print check. The prompt step is above
-this, in the left panel.*
+*Orbiting with the view cube, scrubbing a parameter, then a base plate sketched on the grid,
+typed to 30 × 20 mm and pulled up 2 mm, two holes cut into it and the plate measured. The AI
+prompt sits in the bar at the bottom; generating needs your own OpenRouter key, so this clip
+starts from the built in example part.*
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![no backend](https://img.shields.io/badge/backend-none-brightgreen)

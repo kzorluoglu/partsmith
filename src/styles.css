@@ -242,7 +242,10 @@ button:disabled { cursor: not-allowed; }
   background: transparent; border: 0; outline: none;
   line-height: 1.45;
 }
-.promptbar-input::placeholder { color: var(--faint); }
+.promptbar-input::placeholder { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Height follows the content (see PromptBar.autosize), so it never needs its
+   own scrollbar; a narrow bar next to an open panel showed one otherwise. */
+.promptbar-input { overflow-y: hidden; }
 .promptbar-model {
   align-self: center;
   font-family: var(--mono); font-size: 11px; color: var(--faint);

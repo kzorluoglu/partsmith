@@ -17,7 +17,7 @@ export default class PromptBar extends Component {
           ref={this.inputEl}
           class="promptbar-input"
           rows="1"
-          placeholder={ready ? 'Describe a part, or ask to change this one…' : 'Add an OpenRouter key to start generating'}
+          placeholder={ready ? 'Describe a part, or ask to change this one…' : 'Add an API key to start generating'}
           keydown={this.onKeydown}
           input={this.autosize}
         ></textarea>
