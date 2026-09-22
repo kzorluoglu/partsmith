@@ -1,58 +1,44 @@
 import { Component } from '@geajs/core'
 import Viewer from './components/viewer.tsx'
+import ProjectBar from './components/project-bar.tsx'
+import Rail from './components/rail.tsx'
+import PromptBar from './components/prompt-bar.tsx'
 import ChatPanel from './components/chat-panel.tsx'
 import ParamPanel from './components/param-panel.tsx'
 import StatsPanel from './components/stats-panel.tsx'
 import CodePanel from './components/code-panel.tsx'
 import SettingsDialog from './components/settings-dialog.tsx'
-import model from './stores/model-store.js'
 import ai from './stores/ai-store.js'
+import ui from './stores/ui-store.js'
 
+const TITLES = { chat: 'Generate', params: 'Parameters', code: 'Script', print: 'Print check' }
+
+/**
+ * The viewport fills the window and every control floats on top of it, the
+ * layout of Shapr3D and friends. The side panels stay mounted and are only
+ * swapped by CSS, unmounting would throw away the editor state.
+ */
 export default class App extends Component {
-  tab = 'params'
-
   template() {
+    const { panel } = ui
     return (
-      <div class="app">
-        <header class="topbar">
-          <span class="brand">PartSmith</span>
-          <input
-            class="name-input"
-            value={model.name}
-            change={(e) => { model.name = e.target.value }}
-            aria-label="Model name"
-          />
-          <span class="spacer"></span>
-          {model.running && <span class="badge">building</span>}
-          {/* The key lives behind this button, so it has to read as one. */}
-          <button class={`button small ${ai.ready ? 'ghost' : ''}`} click={() => { ai.settingsOpen = true }}>
-            {ai.ready ? '⚙ settings' : '⚙ add API key'}
-          </button>
-        </header>
+      <div class={`shell ${panel ? 'dock-open' : ''}`}>
+        <Viewer />
+        <ProjectBar />
+        <Rail />
 
-        <main class="layout">
-          <aside class="col left">
-            <ChatPanel />
-          </aside>
+        <aside class={`dock ${panel ? 'open' : ''}`}>
+          <header class="dock-head">
+            <h2>{TITLES[panel] || ''}</h2>
+            <button class="icon-button small" title="Close panel" click={() => ui.togglePanel(panel)}>×</button>
+          </header>
+          <div class={`dock-pane ${panel === 'chat' ? 'on' : ''}`}><ChatPanel /></div>
+          <div class={`dock-pane ${panel === 'params' ? 'on' : ''}`}><ParamPanel /></div>
+          <div class={`dock-pane ${panel === 'code' ? 'on' : ''}`}><CodePanel /></div>
+          <div class={`dock-pane ${panel === 'print' ? 'on' : ''}`}><StatsPanel /></div>
+        </aside>
 
-          <div class="col center">
-            <Viewer />
-          </div>
-
-          <aside class="col right">
-            <nav class="tabs">
-              <button class={`tab ${this.tab === 'params' ? 'on' : ''}`} click={() => { this.tab = 'params' }}>Parameters</button>
-              <button class={`tab ${this.tab === 'print' ? 'on' : ''}`} click={() => { this.tab = 'print' }}>Print</button>
-              <button class={`tab ${this.tab === 'code' ? 'on' : ''}`} click={() => { this.tab = 'code' }}>Code</button>
-            </nav>
-            {/* All three stay mounted and are only swapped by CSS. Unmounting
-                them would throw away the editor state on every tab click. */}
-            <div class={`pane ${this.tab === 'params' ? 'on' : ''}`}><ParamPanel /></div>
-            <div class={`pane ${this.tab === 'print' ? 'on' : ''}`}><StatsPanel /></div>
-            <div class={`pane ${this.tab === 'code' ? 'on' : ''}`}><CodePanel /></div>
-          </aside>
-        </main>
-
+        <PromptBar />
         <SettingsDialog />
       </div>
     )

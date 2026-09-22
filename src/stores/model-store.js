@@ -37,6 +37,8 @@ class ModelStore extends Store {
   running = false
   error = ''
   history = []
+  future = []
+  queued = false
   exportInfo = ''
   features = loadFeatures()
   planes = []
@@ -55,24 +57,63 @@ class ModelStore extends Store {
     return (material.grams / 1000) * settings.material.pricePerKg
   }
 
-  setCode(code, { remember = true } = {}) {
-    if (remember && this.code && this.code !== code) {
-      this.history = [...this.history.slice(-9), this.code]
-    }
-    this.code = code
+  /* ---- history --------------------------------------------------------
+     A snapshot is the script plus the sketch features, so undo covers both a
+     model rewrite from the AI and a cut drawn in the viewer. */
+
+  snapshot() {
+    return { code: this.code, features: JSON.parse(JSON.stringify(this.features)) }
+  }
+
+  remember() {
+    this.history = [...this.history.slice(-29), this.snapshot()]
+    this.future = []
+  }
+
+  restore(state) {
+    this.code = state.code
+    this.features = state.features
     try {
-      localStorage.setItem(CODE_STORAGE, code)
+      localStorage.setItem(CODE_STORAGE, state.code)
     } catch {
       /* ignore */
     }
+    this.persistFeatures()
+    return this.run({ keepParams: true })
+  }
+
+  get canUndo() {
+    return this.history.length > 0
+  }
+
+  get canRedo() {
+    return this.future.length > 0
   }
 
   undo() {
     if (this.history.length === 0) return
     const previous = this.history[this.history.length - 1]
     this.history = this.history.slice(0, -1)
-    this.setCode(previous, { remember: false })
-    this.run()
+    this.future = [...this.future, this.snapshot()]
+    return this.restore(previous)
+  }
+
+  redo() {
+    if (this.future.length === 0) return
+    const next = this.future[this.future.length - 1]
+    this.future = this.future.slice(0, -1)
+    this.history = [...this.history, this.snapshot()]
+    return this.restore(next)
+  }
+
+  setCode(code, { remember = true } = {}) {
+    if (remember && this.code && this.code !== code) this.remember()
+    this.code = code
+    try {
+      localStorage.setItem(CODE_STORAGE, code)
+    } catch {
+      /* ignore */
+    }
   }
 
   setParam(name, value) {
@@ -90,7 +131,13 @@ class ModelStore extends Store {
    * the AI flow can decide whether to ask the model for a repair.
    */
   async run({ keepParams = false } = {}) {
-    if (this.running) return false
+    // A build is already going: remember that another one is wanted instead
+    // of dropping the call, otherwise the last value of a dragged slider or
+    // an undo during a rebuild would never make it to the screen.
+    if (this.running) {
+      this.queued = true
+      return false
+    }
     this.running = true
     this.error = ''
     try {
@@ -120,6 +167,10 @@ class ModelStore extends Store {
       return false
     } finally {
       this.running = false
+      if (this.queued) {
+        this.queued = false
+        this.run({ keepParams: true })
+      }
     }
   }
 
@@ -134,24 +185,28 @@ class ModelStore extends Store {
   }
 
   addFeature(feature) {
+    this.remember()
     this.features = [...this.features, { id: Date.now().toString(36), ...feature }]
     this.persistFeatures()
     return this.run({ keepParams: true })
   }
 
   updateFeature(id, patch) {
+    this.remember()
     this.features = this.features.map((f) => (f.id === id ? { ...f, ...patch } : f))
     this.persistFeatures()
     return this.run({ keepParams: true })
   }
 
   removeFeature(id) {
+    this.remember()
     this.features = this.features.filter((f) => f.id !== id)
     this.persistFeatures()
     return this.run({ keepParams: true })
   }
 
   clearFeatures() {
+    this.remember()
     this.features = []
     this.persistFeatures()
     return this.run({ keepParams: true })
@@ -163,17 +218,18 @@ class ModelStore extends Store {
    */
   async bakeFeatures() {
     if (this.features.length === 0) return
+    const before = this.snapshot()
+    // One undo step for the whole bake, taken before the features are cleared.
+    this.remember()
     const baked = bakeFeatures(this.code, this.features, { autoPlace: settings.autoPlace })
-    const previous = this.features
     this.features = []
     this.persistFeatures()
-    this.setCode(baked)
+    this.setCode(baked, { remember: false })
     const ok = await this.run({ keepParams: true })
     if (!ok) {
       // Roll back rather than leave a broken script and lost features.
-      this.undo()
-      this.features = previous
-      this.persistFeatures()
+      this.history = this.history.slice(0, -1)
+      await this.restore(before)
     }
     return ok
   }

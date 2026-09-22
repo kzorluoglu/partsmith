@@ -3,10 +3,10 @@ import sketch from '../stores/sketch-store.js'
 import { setTool, selectFace, showSketch } from '../lib/scene.js'
 
 const TOOLS = [
-  { id: 'select', label: 'select', title: 'Pick a face' },
-  { id: 'line', label: '⟋ line', title: 'Click point to point, type exact lengths' },
-  { id: 'rect', label: '▭ rect', title: 'Drag a rectangle on the selected face' },
-  { id: 'circle', label: '○ circle', title: 'Drag a circle on the selected face' }
+  { id: 'select', label: 'Select', icon: 'i-cursor', title: 'Pick a face' },
+  { id: 'line', label: 'Line', icon: 'i-line', title: 'Click point to point, type exact lengths' },
+  { id: 'rect', label: 'Rectangle', icon: 'i-rect', title: 'Drag a rectangle on the selected face' },
+  { id: 'circle', label: 'Circle', icon: 'i-circle', title: 'Drag a circle on the selected face' }
 ]
 
 /** Floats over the viewer: tools, live dimensions and the depth popover. */
@@ -21,13 +21,13 @@ export default class SketchToolbar extends Component {
           {TOOLS.map((t) => (
             <button
               key={t.id}
-              class={`chip ${tool === t.id ? 'on' : ''}`}
+              class={`seg ${tool === t.id ? 'on' : ''}`}
               title={t.title}
               disabled={t.id !== 'select' && !selected}
               click={() => this.pick(t.id)}
-            >{t.label}</button>
+            ><span class={`ico sm ${t.icon}`}></span><span>{t.label}</span></button>
           ))}
-          {selected && <button class="chip" title="Deselect face" click={() => selectFace(null)}>✕ face</button>}
+          {selected && <button class="seg" title="Deselect face" click={() => selectFace(null)}><span class="ico sm i-close"></span></button>}
         </div>
 
         <p class="sketchbar-hint">{hint}</p>
@@ -61,8 +61,8 @@ export default class SketchToolbar extends Component {
               <span class="dim-unit">°</span>
             </label>
             <div class="dim-actions">
-              <button class="chip" disabled={!drawing} title="Remove the last point (Backspace)" click={() => sketch.undoPoint()}>undo pt</button>
-              <button class="chip on" disabled={!canClose} title="Close the profile (Enter)" click={() => this.close()}>close</button>
+              <button class="seg" disabled={!drawing} title="Remove the last point (Backspace)" click={() => sketch.undoPoint()}>Undo point</button>
+              <button class="seg on" disabled={!canClose} title="Close the profile (Enter)" click={() => this.close()}>Close</button>
             </div>
           </div>
         )}

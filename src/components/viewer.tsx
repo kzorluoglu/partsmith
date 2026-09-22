@@ -1,18 +1,13 @@
 import { Component } from '@geajs/core'
-import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, setView, destroyScene, isSoftware, enablePicking, showSketch, setProjection, setOverlayVisible } from '../lib/scene.js'
+import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, destroyScene, isSoftware, enablePicking, showSketch, setProjection, setOverlayVisible } from '../lib/scene.js'
 import SketchToolbar from './sketch-toolbar.tsx'
+import ViewCube from './view-cube.tsx'
+import ViewTools from './view-tools.tsx'
+import ui from '../stores/ui-store.js'
 import sketch from '../stores/sketch-store.js'
 import { on } from '../lib/bus.js'
 import settings from '../stores/settings-store.js'
 import model from '../stores/model-store.js'
-
-const VIEWS = ['iso', 'front', 'right', 'top']
-const SHADING = [
-  { id: 'cad', label: 'cad', title: 'Flat CAD shading, no shadows' },
-  { id: 'clay', label: 'clay', title: 'Warm matte clay' },
-  { id: 'orange', label: 'print', title: 'Filament orange' },
-  { id: 'normal', label: 'normal', title: 'Surface normals, useful for spotting flipped faces' }
-]
 
 /** Hosts the WebGL canvas and the overlays drawn on top of it. */
 export default class Viewer extends Component {
@@ -41,46 +36,22 @@ export default class Viewer extends Component {
           </div>
         )}
 
-        <div class="viewer-views">
-          {VIEWS.map((name) => (
-            <button key={name} class="chip" click={() => setView(name)}>{name}</button>
-          ))}
-          <button class="chip" click={() => frameModel(model.stats)}>fit</button>
-          <button
-            class={`chip ${settings.projection === 'ortho' ? 'on' : ''}`}
-            title="Parallel projection, the way a CAD view should measure"
-            click={() => this.setProjection(settings.projection === 'ortho' ? 'persp' : 'ortho')}
-          >{settings.projection === 'ortho' ? 'ortho' : 'persp'}</button>
+        <div class="viewer-corner">
+          <ViewCube />
+          <ViewTools />
         </div>
 
-        <div class="viewer-toggles">
-          <button class={`chip ${settings.showGrid ? 'on' : ''}`} click={() => this.toggle('showGrid')}>grid</button>
-          <button class={`chip ${settings.showBuildVolume ? 'on' : ''}`} click={() => this.toggle('showBuildVolume')}>volume</button>
-          <button class={`chip ${settings.showWireframe ? 'on' : ''}`} click={() => this.toggle('showWireframe')}>edges</button>
-          <button class={`chip ${settings.showAxes ? 'on' : ''}`} click={() => this.toggle('showAxes')}>axes</button>
-          <button class={`chip ${settings.showSketch ? 'on' : ''}`} title="Sketch overlay, never part of the model or the export" click={() => this.toggleOverlay()}>sketch</button>
+        {/* Always mounted, only shown in sketch mode: unmounting would drop
+            its document level key handler and any half drawn profile. */}
+        <div class={`sketch-dock ${ui.sketchMode ? 'open' : ''}`}>
+          <SketchToolbar />
         </div>
 
-        <div class="viewer-shading">
-          {SHADING.map((s) => (
-            <button
-              key={s.id}
-              class={`chip ${settings.shading === s.id ? 'on' : ''}`}
-              title={s.title}
-              click={() => settings.set('shading', s.id)}
-            >{s.label}</button>
-          ))}
+        <div class="statusbar">
+          {stats && <span class="stat">{stats.size[0].toFixed(1)} × {stats.size[1].toFixed(1)} × {stats.size[2].toFixed(1)} mm</span>}
+          {stats && <span class="stat muted">{stats.triangles.toLocaleString()} tris</span>}
+          {running && <span class="stat busy">building</span>}
         </div>
-
-        <SketchToolbar />
-
-        {stats && (
-          <div class="viewer-dims">
-            {stats.size[0].toFixed(1)} × {stats.size[1].toFixed(1)} × {stats.size[2].toFixed(1)} mm
-          </div>
-        )}
-
-        {running && <div class="viewer-status">building…</div>}
 
         {error && (
           <div class="viewer-error">
@@ -90,21 +61,6 @@ export default class Viewer extends Component {
         )}
       </section>
     )
-  }
-
-  toggle(key) {
-    settings.toggle(key)
-    setVisibility(settings)
-  }
-
-  toggleOverlay() {
-    settings.toggle('showSketch')
-    setOverlayVisible(settings.showSketch)
-  }
-
-  setProjection(mode) {
-    settings.set('projection', mode)
-    setProjection(mode)
   }
 
   onAfterRender() {

@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Canvas2DRenderer } from './canvas2d-renderer.js'
 import { planeBasis, toPlane, fromPlane, sketchFromDrag, sketchOutline, snapPoint, segmentLength, segmentAngle, pointAt } from './features.js'
 
@@ -12,6 +13,10 @@ let perspCamera, orthoCamera
 let orthographic = false
 let modelGroup, meshMaterial, mesh, wireframe
 let plate, grid, volumeBox, axes
+let gridUniforms = null
+const cameraListeners = new Set()
+// Last camera matrix the listeners saw. NaN so the first frame always counts.
+const lastView = new Array(16).fill(NaN)
 let frameHandle = 0
 let resizeObserver
 let software = false
@@ -42,8 +47,11 @@ export const requestRender = () => { dirty = true }
  */
 const createRenderer = (canvas) => {
   try {
-    const gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
+    const gl = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
     gl.setPixelRatio(Math.min(devicePixelRatio, 2))
+    gl.setClearColor(0x000000, 0)
+    gl.toneMapping = THREE.NeutralToneMapping
+    gl.toneMappingExposure = 1.0
     software = false
     return gl
   } catch {
@@ -54,19 +62,30 @@ const createRenderer = (canvas) => {
   }
 }
 
-const MATERIAL_COLORS = { cad: 0xc9d1dc, clay: 0xd9d4cc, orange: 0xf5a524 }
-
 /**
- * CAD viewers do not light a part like a product render. No shadows, no
- * specular hotspots, just enough gradient to read the form, so that every
- * face stays legible and equal lengths look equal.
+ * Looks, all shadow free. Lighting comes from a studio environment map rather
+ * than from shadow casting lamps, which gives soft reflections on curved
+ * faces without a single cast shadow. 'cad' is the matte grey engineering
+ * look, 'studio' the glossy filament look of apps like Shapr3D.
  */
+const LOOKS = {
+  studio: { color: 0xf5891f, roughness: 0.36, metalness: 0.0 },
+  cad: { color: 0xc3cad4, roughness: 0.82, metalness: 0.0 },
+  clay: { color: 0xd9d2c7, roughness: 0.95, metalness: 0.0 }
+}
+
 const makeMaterial = (shading) => {
-  if (shading === 'normal') return new THREE.MeshNormalMaterial({ flatShading: true })
-  return new THREE.MeshLambertMaterial({
-    color: MATERIAL_COLORS[shading] ?? MATERIAL_COLORS.cad,
-    emissive: 0x0d1016,
-    emissiveIntensity: 1
+  if (shading === 'normal') return new THREE.MeshNormalMaterial({ polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })
+  const look = LOOKS[shading] || LOOKS.studio
+  // polygonOffset pushes the faces a hair behind their own edge lines, so the
+  // lines never lose the depth test to the surface they lie on and stay solid
+  // instead of breaking up into dashes.
+  return new THREE.MeshStandardMaterial({
+    ...look,
+    envMapIntensity: 1.0,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1
   })
 }
 
@@ -75,7 +94,13 @@ export const initScene = (canvas) => {
   renderer = createRenderer(canvas)
 
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x14161c)
+  scene.background = null
+
+  if (!software) {
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    pmrem.dispose()
+  }
 
   perspCamera = new THREE.PerspectiveCamera(42, 1, 1, 4000)
   perspCamera.up.set(0, 0, 1)
@@ -91,24 +116,20 @@ export const initScene = (canvas) => {
   controls = new OrbitControls(camera, canvas)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
-  controls.maxPolarAngle = Math.PI * 0.98
+  controls.maxPolarAngle = Math.PI
   controls.target.set(0, 0, 30)
 
   // Three soft lights from different sides plus ambient: no face goes black,
   // nothing blows out, and there is not a single shadow caster in the scene.
-  const key = new THREE.DirectionalLight(0xffffff, 1.5)
+  const key = new THREE.DirectionalLight(0xffffff, software ? 1.5 : 0.9)
   key.position.set(120, -180, 220)
   scene.add(key)
 
-  const fill = new THREE.DirectionalLight(0xdfe7f5, 0.9)
+  const fill = new THREE.DirectionalLight(0xdfe7f5, software ? 0.9 : 0.35)
   fill.position.set(-180, 120, 90)
   scene.add(fill)
 
-  const rim = new THREE.DirectionalLight(0xffffff, 0.5)
-  rim.position.set(60, 200, -140)
-  scene.add(rim)
-
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55))
+  scene.add(new THREE.AmbientLight(0xffffff, software ? 0.55 : 0.15))
 
   modelGroup = new THREE.Group()
   scene.add(modelGroup)
@@ -132,9 +153,28 @@ export const initScene = (canvas) => {
       const canvas = renderer.domElement
       syncOrtho((canvas.clientWidth || 1) / (canvas.clientHeight || 1))
     }
+    if (gridUniforms) {
+      // Keep the grid readable at any zoom: cell size follows camera distance.
+      const distance = camera.position.distanceTo(controls.target)
+      const reach = orthographic ? (orthoCamera.top - orthoCamera.bottom) : distance
+      gridUniforms.uMinor.value = Math.pow(10, Math.floor(Math.log10(Math.max(reach / 8, 0.1))))
+      gridUniforms.uFade.value = Math.max(reach * 2.2, 60)
+      gridUniforms.uCenter.value.set(controls.target.x, controls.target.y)
+    }
     if (!software || dirty || moving) {
       renderer.render(scene, camera)
       dirty = false
+    }
+    const view = camera.matrixWorldInverse.elements
+    let changed = false
+    // OrbitControls rebuilds the position from spherical coordinates every
+    // frame, which jitters in the last bits, so compare with a tolerance.
+    for (let i = 0; i < 16; i++) {
+      if (!(Math.abs(view[i] - lastView[i]) < 1e-7)) { changed = true; break }
+    }
+    if (changed) {
+      for (let i = 0; i < 16; i++) lastView[i] = view[i]
+      for (const fn of cameraListeners) fn(view, camera)
     }
   }
   animate()
@@ -200,35 +240,121 @@ const disposeObject = (object) => {
 export const buildPlate = ([x, y, z]) => {
   ;[plate, grid, volumeBox, axes].forEach(disposeObject)
 
-  plate = new THREE.Mesh(
-    new THREE.PlaneGeometry(x, y),
-    new THREE.MeshBasicMaterial({ color: 0x191d25 })
+  // The bed is an outline now, a filled plate hides the grid and reads heavy.
+  const hx = x / 2, hy = y / 2
+  plate = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-hx, -hy, 0.02), new THREE.Vector3(hx, -hy, 0.02),
+      new THREE.Vector3(hx, hy, 0.02), new THREE.Vector3(-hx, hy, 0.02)
+    ]),
+    new THREE.LineBasicMaterial({ color: 0x5b6784, transparent: true, opacity: 0.8 })
   )
-  plate.position.z = -0.05
   scene.add(plate)
 
-  grid = new THREE.GridHelper(Math.max(x, y), Math.round(Math.max(x, y) / 10), 0x3d4557, 0x262c38)
-  grid.rotation.x = Math.PI / 2
-  grid.position.z = 0
+  grid = software ? makeLineGrid(x, y) : makeInfiniteGrid()
   scene.add(grid)
 
   const cage = new THREE.BoxGeometry(x, y, z)
   volumeBox = new THREE.LineSegments(
     new THREE.EdgesGeometry(cage),
-    new THREE.LineBasicMaterial({ color: 0x46506a, transparent: true, opacity: 0.55 })
+    new THREE.LineBasicMaterial({ color: 0x46506a, transparent: true, opacity: 0.35 })
   )
   volumeBox.position.z = z / 2
   cage.dispose()
   scene.add(volumeBox)
 
-  axes = new THREE.AxesHelper(Math.min(x, y) * 0.22)
-  axes.position.set(-x / 2, -y / 2, 0.1)
+  axes = makeAxes(4000)
   scene.add(axes)
   dirty = true
 }
 
+/** X red, Y green, Z blue through the origin, the convention every CAD app uses. */
+const makeAxes = (length) => {
+  const group = new THREE.Group()
+  const line = (to, color, opacity) => {
+    const l = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...to.map((v) => -v)), new THREE.Vector3(...to)]),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+    )
+    group.add(l)
+  }
+  line([length, 0, 0], 0xe5484d, 0.75)
+  line([0, length, 0], 0x46a758, 0.75)
+  line([0, 0, length], 0x3e63dd, 0.75)
+  group.position.z = 0.03
+  return group
+}
+
+/** Plain line grid for the software renderer, which cannot run shaders. */
+const makeLineGrid = (x, y) => {
+  const g = new THREE.GridHelper(Math.max(x, y), Math.round(Math.max(x, y) / 10), 0x3d4557, 0x262c38)
+  g.rotation.x = Math.PI / 2
+  return g
+}
+
+/**
+ * Infinite grid on one big quad. Lines are drawn in the fragment shader with
+ * screen space derivatives so they stay one pixel sharp at any zoom, the cell
+ * size adapts to the camera distance, and the grid fades out towards the
+ * horizon instead of ending in a hard square.
+ */
+const makeInfiniteGrid = () => {
+  gridUniforms = {
+    uMinor: { value: 10 },
+    uFade: { value: 600 },
+    uCenter: { value: new THREE.Vector2(0, 0) },
+    uColorMinor: { value: new THREE.Color(0x2a3040) },
+    uColorMajor: { value: new THREE.Color(0x3d465c) }
+  }
+  const material = new THREE.ShaderMaterial({
+    uniforms: gridUniforms,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      varying vec3 vWorld;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: `
+      varying vec3 vWorld;
+      uniform float uMinor;
+      uniform float uFade;
+      uniform vec2 uCenter;
+      uniform vec3 uColorMinor;
+      uniform vec3 uColorMajor;
+      float gridLine(vec2 p, float size) {
+        vec2 q = p / size;
+        vec2 g = abs(fract(q - 0.5) - 0.5) / fwidth(q);
+        return 1.0 - min(min(g.x, g.y), 1.0);
+      }
+      void main() {
+        float minor = gridLine(vWorld.xy, uMinor);
+        float major = gridLine(vWorld.xy, uMinor * 10.0);
+        float d = length(vWorld.xy - uCenter);
+        float fade = 1.0 - smoothstep(uFade * 0.35, uFade, d);
+        float a = max(minor * 0.45, major * 0.9) * fade;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(mix(uColorMinor, uColorMajor, major), a);
+      }`
+  })
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(20000, 20000), material)
+  quad.position.z = -0.01
+  quad.renderOrder = -1
+  return quad
+}
+
+/** Subscribe to camera moves, e.g. for the view cube. Returns an unsubscribe. */
+export const onCameraChange = (fn) => {
+  cameraListeners.add(fn)
+  if (camera) fn(camera.matrixWorldInverse.elements, camera)
+  return () => cameraListeners.delete(fn)
+}
+
 /** Replaces the displayed mesh with new triangle soup from the worker. */
-export const setGeometry = (payload, { shading = 'matcap', showWireframe = false } = {}) => {
+export const setGeometry = (payload, { shading = 'studio', showWireframe = true } = {}) => {
   disposeObject(mesh)
   disposeObject(wireframe)
   mesh = null
@@ -257,7 +383,7 @@ export const setGeometry = (payload, { shading = 'matcap', showWireframe = false
   ))
   wireframe = new THREE.LineSegments(
     edgeGeometry,
-    new THREE.LineBasicMaterial({ color: 0x1b2028, transparent: true, opacity: 0.9 })
+    new THREE.LineBasicMaterial({ color: 0x14161b, transparent: true, opacity: 0.85 })
   )
   wireframe.visible = showWireframe
   modelGroup.add(wireframe)
@@ -289,9 +415,10 @@ const setHighlight = (planeId, strong = false) => {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(picked, 3))
   highlight = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-    color: strong ? 0x4fc3f7 : 0xffffff,
+    color: strong ? 0x3b82f6 : 0xffffff,
     transparent: true,
-    opacity: strong ? 0.45 : 0.18,
+    opacity: strong ? 0.72 : 0.16,
+    toneMapped: false,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -2,
@@ -309,7 +436,7 @@ const setPreview = (sketch, plane) => {
   const pts = sketchOutline(sketch).map(([u, v]) => new THREE.Vector3(...fromPlane(plane, u, v, 0.15)))
   preview = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: 0x4fc3f7, depthTest: false })
+    new THREE.LineBasicMaterial({ color: 0x9cc2ff, depthTest: false, toneMapped: false })
   )
   preview.renderOrder = 10
   overlay.add(preview)
@@ -352,7 +479,7 @@ const drawPoly = () => {
       const p = new THREE.Vector3(...fromPlane(pick.selected, pts[0][0], pts[0][1], 0.2))
       preview = new THREE.Points(
         new THREE.BufferGeometry().setFromPoints([p]),
-        new THREE.PointsMaterial({ color: 0x4fc3f7, size: 6, sizeAttenuation: false, depthTest: false })
+        new THREE.PointsMaterial({ color: 0x9cc2ff, size: 7, sizeAttenuation: false, depthTest: false, toneMapped: false })
       )
       preview.renderOrder = 10
       overlay.add(preview)
@@ -364,7 +491,7 @@ const drawPoly = () => {
   if (poly.closing && poly.points.length > 2) world.push(world[0])
   preview = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(world),
-    new THREE.LineBasicMaterial({ color: poly.closing ? 0x3fb950 : 0x4fc3f7, depthTest: false })
+    new THREE.LineBasicMaterial({ color: poly.closing ? 0x3fb950 : 0x9cc2ff, depthTest: false, toneMapped: false })
   )
   preview.renderOrder = 10
   overlay.add(preview)
@@ -566,7 +693,7 @@ export const setShading = (shading) => {
 
 export const setVisibility = ({ showGrid, showBuildVolume, showWireframe, showAxes }) => {
   if (grid) grid.visible = showGrid
-  if (plate) plate.visible = showGrid
+  if (plate) plate.visible = showBuildVolume
   if (volumeBox) volumeBox.visible = showBuildVolume
   if (axes) axes.visible = showAxes
   if (wireframe) wireframe.visible = showWireframe
@@ -603,6 +730,7 @@ export const setView = (name) => {
     left: [-1, 0, 0],
     right: [1, 0, 0],
     top: [0, 0, 1],
+    bottom: [0, 0, -1],
     iso: [0.75, -1, 0.72]
   }
   const dir = new THREE.Vector3(...(vectors[name] || vectors.iso)).normalize()

@@ -65,8 +65,12 @@ export class Canvas2DRenderer {
     const h = this.domElement.height
 
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.fillStyle = scene.background ? `#${scene.background.getHexString()}` : '#000'
-    ctx.fillRect(0, 0, w, h)
+    if (scene.background) {
+      ctx.fillStyle = `#${scene.background.getHexString()}`
+      ctx.fillRect(0, 0, w, h)
+    } else {
+      ctx.clearRect(0, 0, w, h)
+    }
 
     camera.updateMatrixWorld()
     scene.updateMatrixWorld()
@@ -76,8 +80,8 @@ export class Canvas2DRenderer {
 
     scene.traverse((object) => {
       if (!object.visible) return
-      if (object.isMesh) this.collectMesh(object, camera, w, h, queue)
-      else if (object.isLineSegments) this.collectLines(object, camera, w, h, queue)
+      if (object.isMesh && !object.material?.isShaderMaterial) this.collectMesh(object, camera, w, h, queue)
+      else if (object.isLineSegments || object.isLine) this.collectLines(object, camera, w, h, queue)
     })
 
     // Painter's algorithm: no depth buffer, so draw far things first.
@@ -177,26 +181,34 @@ export class Canvas2DRenderer {
     const position = lines.geometry?.attributes?.position
     if (!position) return
     const material = lines.material
+    const colors = material?.vertexColors ? lines.geometry.attributes.color : null
     const color = material?.color ? `#${material.color.getHexString()}` : '#555'
     const opacity = material?.transparent ? (material.opacity ?? 1) : 1
 
     modelView.multiplyMatrices(camera.matrixWorldInverse, lines.matrixWorld)
     modelViewProjection.multiplyMatrices(viewProjection, lines.matrixWorld)
 
-    for (let i = 0; i < position.count; i += 2) {
+    // Segments come in pairs, a strip shares every vertex, a loop also closes.
+    const strip = !lines.isLineSegments
+    const step = strip ? 1 : 2
+    const count = strip && lines.isLineLoop ? position.count : position.count - (strip ? 1 : 0)
+    for (let i = 0; i < count; i += step) {
+      const j = strip ? (i + 1) % position.count : i + 1
       if (!project(position.getX(i), position.getY(i), position.getZ(i), modelViewProjection, w, h, a)) continue
-      if (!project(position.getX(i + 1), position.getY(i + 1), position.getZ(i + 1), modelViewProjection, w, h, b)) continue
+      if (!project(position.getX(j), position.getY(j), position.getZ(j), modelViewProjection, w, h, b)) continue
 
       v.set(
-        (position.getX(i) + position.getX(i + 1)) / 2,
-        (position.getY(i) + position.getY(i + 1)) / 2,
-        (position.getZ(i) + position.getZ(i + 1)) / 2
+        (position.getX(i) + position.getX(j)) / 2,
+        (position.getY(i) + position.getY(j)) / 2,
+        (position.getZ(i) + position.getZ(j)) / 2
       ).applyMatrix4(modelView)
 
       queue.push({
         kind: 'line',
         depth: v.z,
-        color,
+        color: colors
+          ? `rgb(${Math.round(colors.getX(i) * 255)},${Math.round(colors.getY(i) * 255)},${Math.round(colors.getZ(i) * 255)})`
+          : color,
         opacity,
         width: this.pixelRatio,
         x0: a.x, y0: a.y, x1: b.x, y1: b.y

@@ -32,7 +32,8 @@ class AiStore extends Store {
   }
 
   async init() {
-    if (!this.ready) this.settingsOpen = true
+    // No modal on first visit: the model is the first thing people should
+    // see. The key is asked for when they actually try to generate.
     try {
       this.models = await listModels()
     } catch (error) {

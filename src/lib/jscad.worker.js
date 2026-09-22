@@ -113,8 +113,15 @@ const tessellate = (solids) => {
   // must be filtered by angle or every segment line shows up.
   const collectEdges = triangleCount <= 200000
   const edgeUse = collectEdges ? new Map() : null
-  const SHARP_COS = Math.cos((20 * Math.PI) / 180)
+  const SHARP_COS = Math.cos((30 * Math.PI) / 180)
   const vkey = (v) => `${Math.round(v[0] * 1e3)},${Math.round(v[1] * 1e3)},${Math.round(v[2] * 1e3)}`
+
+  // Smooth shading data: which triangles touch each vertex, and how big they
+  // are. Normals are averaged only across triangles within the crease angle,
+  // so a cylinder shades round while a box keeps its hard corners.
+  const vertexTris = collectEdges ? new Map() : null
+  const cornerKeys = collectEdges ? new Array(triangleCount * 3) : null
+  const triArea = new Float32Array(triangleCount)
 
   // Vector area of the surface. On a closed surface it sums to zero, and
   // unlike edge matching it is not confused by the T-junctions that JSCAD's
@@ -164,8 +171,16 @@ const tessellate = (solids) => {
       plane.cz += area * (a[2] + b[2] + c[2]) / 3
       planeIds[tri++] = planeId
 
+      triArea[tri - 1] = area
+
       if (collectEdges) {
         const keys = [vkey(a), vkey(b), vkey(c)]
+        for (let k = 0; k < 3; k++) {
+          cornerKeys[(tri - 1) * 3 + k] = keys[k]
+          let list = vertexTris.get(keys[k])
+          if (!list) vertexTris.set(keys[k], (list = []))
+          list.push(tri - 1)
+        }
         const corners = [a, b, c]
         for (let e = 0; e < 3; e++) {
           const k1 = keys[e]
@@ -210,6 +225,28 @@ const tessellate = (solids) => {
   const overhangArea = downFaces.reduce((sum, f) => (f.z > plateZ ? sum + f.area : sum), 0)
 
   const empty = triangleCount === 0
+  if (collectEdges) {
+    // Flat normals were written per triangle above, read them before overwriting.
+    const flat = normals.slice()
+    for (let t = 0; t < triangleCount; t++) {
+      const nx = flat[t * 9], ny = flat[t * 9 + 1], nz = flat[t * 9 + 2]
+      for (let k = 0; k < 3; k++) {
+        let sx = 0, sy = 0, sz = 0
+        for (const u of vertexTris.get(cornerKeys[t * 3 + k])) {
+          const ux = flat[u * 9], uy = flat[u * 9 + 1], uz = flat[u * 9 + 2]
+          if (nx * ux + ny * uy + nz * uz < SHARP_COS) continue
+          const w = triArea[u]
+          sx += ux * w; sy += uy * w; sz += uz * w
+        }
+        const len = Math.hypot(sx, sy, sz)
+        if (len > 0) {
+          const o = t * 9 + k * 3
+          normals[o] = sx / len; normals[o + 1] = sy / len; normals[o + 2] = sz / len
+        }
+      }
+    }
+  }
+
   let edgePositions = new Float32Array(0)
   if (collectEdges) {
     const out = []

@@ -11,27 +11,43 @@ const load = () => {
   }
 }
 
-/** Viewer and print preferences, persisted so a reload keeps the setup. */
-class SettingsStore extends Store {
-  printerId = 'bambu-a1'
-  materialId = 'pla'
-  infill = 0.2
-  showGrid = true
-  showBuildVolume = true
-  showWireframe = true
-  showAxes = true
-  autoPlace = true
-  shading = 'cad'
-  showSketch = true
-  projection = 'persp'
-
-  constructor() {
-    super()
-    const saved = load()
-    // 'matcap' was the old orange render look, before the flat CAD shading.
-    if (saved.shading === 'matcap') delete saved.shading
-    Object.assign(this, saved)
+/**
+ * Saved values, read once at module load. Settings from before the studio
+ * look drop their old shading so the new default applies once; after that
+ * the user's own pick sticks.
+ */
+const saved = (() => {
+  const data = load()
+  if (data.version !== 2) {
+    delete data.shading
+    delete data.projection
   }
+  return data
+})()
+
+const pick = (key, fallback) => (key in saved ? saved[key] : fallback)
+
+/**
+ * Viewer and print preferences, persisted so a reload keeps the setup.
+ *
+ * No constructor on purpose: Gea's compiler only turns a Store subclass into
+ * its reactive compiled form when it has none. With a constructor the class
+ * stays a plain Store and no template ever sees its changes, which is why the
+ * display toggles once looked stuck.
+ */
+class SettingsStore extends Store {
+  printerId = pick('printerId', 'bambu-a1')
+  materialId = pick('materialId', 'pla')
+  infill = pick('infill', 0.2)
+  showGrid = pick('showGrid', true)
+  showBuildVolume = pick('showBuildVolume', true)
+  showWireframe = pick('showWireframe', true)
+  showAxes = pick('showAxes', true)
+  autoPlace = pick('autoPlace', true)
+  shading = pick('shading', 'studio')
+  showSketch = pick('showSketch', true)
+  projection = pick('projection', 'persp')
+  version = 2
 
   get printer() {
     return PRINTERS.find((p) => p.id === this.printerId) || PRINTERS[0]
@@ -53,7 +69,7 @@ class SettingsStore extends Store {
 
   persist() {
     const snapshot = {}
-    for (const key of ['printerId', 'materialId', 'infill', 'showGrid', 'showBuildVolume', 'showWireframe', 'showAxes', 'autoPlace', 'shading', 'showSketch', 'projection']) {
+    for (const key of ['printerId', 'materialId', 'infill', 'showGrid', 'showBuildVolume', 'showWireframe', 'showAxes', 'autoPlace', 'shading', 'showSketch', 'projection', 'version']) {
       snapshot[key] = this[key]
     }
     try {
