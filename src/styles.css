@@ -288,7 +288,18 @@ button:disabled { cursor: not-allowed; }
   -webkit-backface-visibility: hidden;
   transition: background 0.12s, color 0.12s;
 }
-.vc-face:hover { background: linear-gradient(160deg, #5b9bff, #3b82f6); color: #fff; border-color: #8ab8ff; }
+/* The region under the pointer lights up instead of the whole face: middle,
+   edge band or corner, whichever a click would fly to. */
+.viewcube-stage { cursor: grab; touch-action: none; }
+.viewcube-stage.dragging { cursor: grabbing; }
+.vc-face { overflow: hidden; }
+.vc-face:hover { color: #fff; border-color: rgba(138, 184, 255, 0.7); }
+.vc-label, .vc-hot { pointer-events: none; }
+/* Picking is computed from the cube rotation, see ViewCube.pick. */
+.viewcube-stage .vc-face { pointer-events: none; }
+.vc-label { position: relative; z-index: 1; }
+.vc-hot { position: absolute; display: none; background: rgba(59, 130, 246, 0.85); }
+.vc-hot.on { display: block; }
 .vc-top, .vc-bottom { background: linear-gradient(160deg, rgba(66, 74, 94, 0.96), rgba(46, 52, 66, 0.96)); }
 
 .viewtools { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }

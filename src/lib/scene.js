@@ -18,6 +18,7 @@ const cameraListeners = new Set()
 // Last camera matrix the listeners saw. NaN so the first frame always counts.
 const lastView = new Array(16).fill(NaN)
 let frameHandle = 0
+let viewAnim = null          // camera flight started by the view cube
 let resizeObserver
 let software = false
 let dirty = true
@@ -139,8 +140,12 @@ export const initScene = (canvas) => {
   // for nothing, so the software path only draws when the scene changed.
   controls.addEventListener('change', requestRender)
 
+  // Any user orbit, pan or zoom takes over from a running view cube flight.
+  controls.addEventListener('start', () => { viewAnim = null })
+
   const animate = () => {
     frameHandle = requestAnimationFrame(animate)
+    if (viewAnim) stepViewAnim()
     const moving = controls.update()
     if (orthographic && (moving || dirty)) {
       const canvas = renderer.domElement
@@ -757,21 +762,76 @@ export const cameraState = () => (camera && controls
   ? { position: camera.position.toArray(), target: controls.target.toArray() }
   : null)
 
-export const setView = (name) => {
+const VIEW_DIRECTIONS = {
+  front: [0, -1, 0],
+  back: [0, 1, 0],
+  left: [-1, 0, 0],
+  right: [1, 0, 0],
+  top: [0, 0, 1],
+  bottom: [0, 0, -1],
+  iso: [0.75, -1, 0.72]
+}
+
+export const setView = (name) => setViewDirection(VIEW_DIRECTIONS[name] || VIEW_DIRECTIONS.iso)
+
+/**
+ * Flies the camera to look at the target from `dir`, keeping distance and
+ * target. Straight top and bottom views are nudged a hair towards the front
+ * so "up" on screen stays defined and the front face ends up at the bottom.
+ */
+export const setViewDirection = (dir, { animate = true } = {}) => {
   if (!camera || !controls) return
+  const to = new THREE.Vector3(...dir).normalize()
+  if (Math.abs(to.z) > 0.9999) to.set(0, -0.0004, Math.sign(to.z)).normalize()
   const target = controls.target.clone()
   const distance = camera.position.distanceTo(target)
-  const vectors = {
-    front: [0, -1, 0],
-    back: [0, 1, 0],
-    left: [-1, 0, 0],
-    right: [1, 0, 0],
-    top: [0, 0, 1],
-    bottom: [0, 0, -1],
-    iso: [0.75, -1, 0.72]
+  const from = camera.position.clone().sub(target).normalize()
+  if (!animate || from.angleTo(to) < 1e-4) {
+    viewAnim = null
+    camera.position.copy(target).addScaledVector(to, distance)
+    controls.update()
+    dirty = true
+    return
   }
-  const dir = new THREE.Vector3(...(vectors[name] || vectors.iso)).normalize()
-  camera.position.copy(target).addScaledVector(dir, distance)
+  // For opposite views pick the natural axis: turn around Z, not flip over.
+  let rotation
+  if (from.dot(to) < -0.999) {
+    const axis = Math.abs(from.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)
+    rotation = new THREE.Quaternion().setFromAxisAngle(axis, Math.PI)
+  } else {
+    rotation = new THREE.Quaternion().setFromUnitVectors(from, to)
+  }
+  viewAnim = { from, to, rotation, target, distance, start: performance.now(), duration: 420 }
+  dirty = true
+}
+
+const stepViewAnim = () => {
+  const a = viewAnim
+  const t = Math.min(1, (performance.now() - a.start) / a.duration)
+  const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+  const q = new THREE.Quaternion().slerp(a.rotation, eased)
+  const dir = t >= 1 ? a.to.clone() : a.from.clone().applyQuaternion(q)
+  camera.position.copy(a.target).addScaledVector(dir, a.distance)
+  camera.lookAt(a.target)
+  if (t >= 1) viewAnim = null
+  dirty = true
+}
+
+/**
+ * Orbits by a mouse delta, the way dragging the view cube feels: the cube
+ * follows the hand, so dragging right turns the part to the right.
+ */
+export const orbitBy = (dx, dy) => {
+  if (!camera || !controls) return
+  viewAnim = null
+  const offset = camera.position.clone().sub(controls.target)
+  const r = offset.length()
+  let theta = Math.atan2(offset.y, offset.x) - dx * 0.012
+  let phi = Math.acos(THREE.MathUtils.clamp(offset.z / r, -1, 1)) - dy * 0.012
+  phi = THREE.MathUtils.clamp(phi, 0.0005, Math.PI - 0.0005)
+  offset.set(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi))
+  camera.position.copy(controls.target).add(offset)
+  camera.lookAt(controls.target)
   controls.update()
   dirty = true
 }
