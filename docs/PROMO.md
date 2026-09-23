@@ -50,7 +50,7 @@ When a generated script throws, the error and the script go back to the model on
 the fix is rerun automatically. You mostly never see it happen.
 
 **6/**
-No backend. No accounts. No telemetry. Your OpenRouter key stays in localStorage and the
+No backend. No accounts. No telemetry. Your OpenRouter key is encrypted in the browser and the
 browser talks to the API directly, so you pick any model you want and pay for exactly
 what you use.
 
@@ -86,7 +86,7 @@ whether it fits your printer's build volume, how much steep overhang needs suppo
 what the part will cost in filament.
 
 The whole thing runs in the browser. No backend, no accounts, no telemetry. Your API key
-stays in localStorage.
+is encrypted in the browser and sent only to OpenRouter.
 
 Open source, MIT: github.com/kzorluoglu/partsmith
 

@@ -43,7 +43,7 @@ export default class SettingsDialog extends Component {
             />
           </label>
           <p class="hint">
-            Stored in this browser's localStorage and sent only to openrouter.ai. There is no backend.
+            Encrypted in this browser and sent only to openrouter.ai. There is no backend.
             Get a key at <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">openrouter.ai/keys</a>.
           </p>
 

@@ -10,7 +10,7 @@ const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5'
 
 /** Chat state and the generate / refine / repair loop. */
 class AiStore extends Store {
-  apiKey = getApiKey()
+  apiKey = ''
   modelId = localStorage.getItem(MODEL_STORAGE) || DEFAULT_MODEL
   models = []
   modelsError = ''
@@ -37,6 +37,7 @@ class AiStore extends Store {
     // No modal on first visit: the model is the first thing people should
     // see. The key is asked for when they actually try to generate.
     try {
+      this.apiKey = await getApiKey()
       this.models = await listModels()
     } catch (error) {
       this.modelsError = error.message

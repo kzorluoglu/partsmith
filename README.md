@@ -32,7 +32,7 @@ your prompt ──▶ LLM writes a JSCAD script ──▶ real solid geometry
 - **It fixes its own mistakes.** When a generated script throws, the error goes back to the
   model once and the corrected version is rerun.
 - **Nothing leaves your machine except the prompt.** No backend, no accounts, no telemetry.
-  Your API key stays in `localStorage`.
+  Your API key is encrypted in the browser and sent only to OpenRouter.
 - **Any model you like.** Anything OpenRouter serves, from Claude and GPT to free ones.
 
 ## Sketch and extrude

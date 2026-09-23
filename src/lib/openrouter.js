@@ -1,28 +1,100 @@
 /**
  * Direct browser client for the OpenRouter chat API.
  *
- * There is no backend in this app, so the key lives in localStorage and every
+ * There is no backend in this app, so the key is encrypted locally and every
  * request goes straight from the page to openrouter.ai, which allows CORS.
  */
 
 const BASE = 'https://openrouter.ai/api/v1'
-const KEY_STORAGE = 'partsmith.openrouter.key'
+const LEGACY_KEY_STORAGE = 'partsmith.openrouter.key'
+const DB_NAME = 'partsmith.secrets'
+const DB_VERSION = 1
+const STORE_NAME = 'keys'
+const CRYPTO_KEY = 'encryption-key'
+const API_KEY = 'openrouter-api-key'
 const MAX_TOKENS = 8192
 
-export const getApiKey = () => {
+const openDb = () => new Promise((resolve, reject) => {
+  if (!globalThis.indexedDB) return reject(new Error('IndexedDB is unavailable'))
+  const request = indexedDB.open(DB_NAME, DB_VERSION)
+  request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME)
+  request.onsuccess = () => resolve(request.result)
+  request.onerror = () => reject(request.error || new Error('Could not open secure browser storage'))
+})
+
+const dbGet = async (key) => {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(key)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+const dbPut = async (key, value) => {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(value, key)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+const dbDelete = async (key) => {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(key)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+const encode = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
+const decode = (value) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0))
+
+const getCryptoKey = async () => {
+  let key = await dbGet(CRYPTO_KEY)
+  if (key) return key
+  key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+  await dbPut(CRYPTO_KEY, key)
+  return key
+}
+
+const encrypt = async (value) => {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await getCryptoKey(), new TextEncoder().encode(value))
+  return { iv: encode(iv), data: encode(data) }
+}
+
+const decrypt = async (record) => {
+  if (!record?.iv || !record?.data) return ''
+  const data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: decode(record.iv) }, await dbGet(CRYPTO_KEY), decode(record.data))
+  return new TextDecoder().decode(data)
+}
+
+/** Loads the encrypted key and migrates the old plaintext localStorage value once. */
+export const getApiKey = async () => {
   try {
-    return localStorage.getItem(KEY_STORAGE) || ''
+    const stored = await dbGet(API_KEY)
+    if (stored) return await decrypt(stored)
+    const legacy = localStorage.getItem(LEGACY_KEY_STORAGE) || ''
+    if (legacy) {
+      await dbPut(API_KEY, await encrypt(legacy))
+      localStorage.removeItem(LEGACY_KEY_STORAGE)
+    }
+    return legacy
   } catch {
     return ''
   }
 }
 
-export const setApiKey = (key) => {
+export const setApiKey = async (key) => {
   try {
-    if (key) localStorage.setItem(KEY_STORAGE, key)
-    else localStorage.removeItem(KEY_STORAGE)
+    if (key) await dbPut(API_KEY, await encrypt(key))
+    else await dbDelete(API_KEY)
+    localStorage.removeItem(LEGACY_KEY_STORAGE)
   } catch {
-    /* private mode, the key simply does not persist */
+    /* private mode or an unsupported browser: keep the key in memory only */
   }
 }
 
