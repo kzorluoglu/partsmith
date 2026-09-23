@@ -993,6 +993,29 @@ export const snapshot = () => {
   return renderer.domElement.toDataURL('image/png')
 }
 
+/**
+ * Small JPEG of the current view for the model library, cropped to fill the
+ * frame over the viewport's own background colour.
+ */
+export const thumbnail = (width = 240, height = 160) => {
+  if (!renderer) return ''
+  renderer.render(scene, camera)
+  const src = renderer.domElement
+  if (!src.width || !src.height) return ''
+  const out = document.createElement('canvas')
+  out.width = width
+  out.height = height
+  const ctx = out.getContext('2d')
+  ctx.fillStyle = '#171a21'
+  ctx.fillRect(0, 0, width, height)
+  // Zoom in a little: the part sits in the middle, the edges are empty grid.
+  const scale = Math.max(width / src.width, height / src.height) * 1.35
+  const w = src.width * scale
+  const h = src.height * scale
+  ctx.drawImage(src, (width - w) / 2, (height - h) / 2, w, h)
+  return out.toDataURL('image/jpeg', 0.78)
+}
+
 export const destroyScene = () => {
   cancelAnimationFrame(frameHandle)
   controls?.removeEventListener('change', requestRender)

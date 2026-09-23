@@ -1,5 +1,7 @@
 import { Component } from '@geajs/core'
 import ai from '../stores/ai-store.js'
+import model from '../stores/model-store.js'
+import library from '../stores/library-store.js'
 import { PROMPT_IDEAS } from '../lib/examples.js'
 import { emit } from '../lib/bus.js'
 
@@ -10,24 +12,29 @@ const LABELS = {
   error: 'error'
 }
 
-/** Prompt input, conversation log and the live stream of the current reply. */
+/**
+ * Conversation log, the live stream of the current reply, and once the first
+ * model exists the field for every follow up change.
+ */
 export default class ChatPanel extends Component {
   logEl = null
+  inputEl = null
 
   template() {
-    const { messages, streaming, streamText, error } = ai
+    const { messages, streaming, streamText, error, busy } = ai
+    const talking = messages.length > 0
 
     return (
       <section class="panel chat">
         <header class="panel-head">
           <h2>Conversation</h2>
           <div class="panel-head-actions">
-            {messages.length > 0 && <button class="link" click={() => ai.clear()}>clear</button>}
+            {talking && <button class="link" title="Keep this model, start a new one" disabled={busy} click={() => library.newModel()}>new model</button>}
           </div>
         </header>
 
         <div ref={this.logEl} class="chat-log">
-          {messages.length === 0 && !streaming && (
+          {!talking && !streaming && (
             <div class="chat-empty">
               <p>Describe a part in the bar at the bottom. The model answers with a parametric JSCAD script that is built, checked and shown right away. Or start from one of these:</p>
               <div class="ideas">
@@ -56,12 +63,47 @@ export default class ChatPanel extends Component {
         </div>
 
         {error && <p class="chat-error">{error}</p>}
+
+        <form class={`chat-compose ${talking ? '' : 'gone'}`} submit={this.submit}>
+          <textarea
+            ref={this.inputEl}
+            class="chat-input"
+            spellcheck="false"
+            rows="1"
+            placeholder="Ask for a change…"
+            keydown={this.onKeydown}
+            input={this.autosize}
+          ></textarea>
+          {streaming
+            ? <button type="button" class="round-btn danger" title="Stop" click={() => ai.abort()}><span class="ico sm i-stop"></span></button>
+            : <button type="submit" class="round-btn" title="Send (Enter)" disabled={model.running || busy}><span class="ico sm i-send"></span></button>}
+        </form>
       </section>
     )
   }
 
   useIdea(idea) {
     emit('prompt:fill', idea)
+  }
+
+  autosize = () => {
+    const el = this.inputEl
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }
+
+  onKeydown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      this.submit(event)
+    }
+  }
+
+  submit = (event) => {
+    event.preventDefault()
+    if (!ai.submit(this.inputEl.value)) return
+    this.inputEl.value = ''
+    this.autosize()
   }
 
   scrollDown() {
@@ -76,10 +118,12 @@ export default class ChatPanel extends Component {
 
   onAfterRender() {
     this.offStream = ai.observe('streamText', () => this.scrollDown())
+    this.offMessages = ai.observe('messages', () => this.scrollDown())
   }
 
   dispose() {
     this.offStream?.()
+    this.offMessages?.()
     super.dispose()
   }
 }

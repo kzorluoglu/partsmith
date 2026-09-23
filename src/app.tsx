@@ -6,12 +6,14 @@ import PromptBar from './components/prompt-bar.tsx'
 import ChatPanel from './components/chat-panel.tsx'
 import ParamPanel from './components/param-panel.tsx'
 import StatsPanel from './components/stats-panel.tsx'
+import LibraryPanel from './components/library-panel.tsx'
 import CodePanel from './components/code-panel.tsx'
 import SettingsDialog from './components/settings-dialog.tsx'
 import ai from './stores/ai-store.js'
 import ui from './stores/ui-store.js'
+import library from './stores/library-store.js'
 
-const TITLES = { chat: 'Generate', params: 'Parameters', code: 'Script', print: 'Print check' }
+const TITLES = { library: 'Models', chat: 'Generate', params: 'Parameters', code: 'Script', print: 'Print check' }
 
 /**
  * The viewport fills the window and every control floats on top of it, the
@@ -32,6 +34,7 @@ export default class App extends Component {
             <h2>{TITLES[panel] || ''}</h2>
             <button class="icon-button small" title="Close panel" click={() => ui.togglePanel(panel)}>×</button>
           </header>
+          <div class={`dock-pane ${panel === 'library' ? 'on' : ''}`}><LibraryPanel /></div>
           <div class={`dock-pane ${panel === 'chat' ? 'on' : ''}`}><ChatPanel /></div>
           <div class={`dock-pane ${panel === 'params' ? 'on' : ''}`}><ParamPanel /></div>
           <div class={`dock-pane ${panel === 'code' ? 'on' : ''}`}><CodePanel /></div>
@@ -46,5 +49,6 @@ export default class App extends Component {
 
   onAfterRender() {
     ai.init()
+    library.init()
   }
 }

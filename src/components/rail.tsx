@@ -6,6 +6,7 @@ import * as sketcher from '../lib/sketcher.js'
 import RailItem from './rail-item.tsx'
 
 const PANELS = [
+  { id: 'library', label: 'Models', icon: 'i-layers' },
   { id: 'chat', label: 'Generate', icon: 'i-spark' },
   { id: 'params', label: 'Parameters', icon: 'i-sliders' },
   { id: 'code', label: 'Script', icon: 'i-code' },

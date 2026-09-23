@@ -4,6 +4,7 @@ import { SYSTEM_PROMPT, contextMessage, repairMessage, extractCode } from '../li
 import settings from './settings-store.js'
 import model from './model-store.js'
 import { emit } from '../lib/bus.js'
+import ui from './ui-store.js'
 
 const MODEL_STORAGE = 'partsmith.model'
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5'
@@ -127,6 +128,30 @@ class AiStore extends Store {
   }
 
   /**
+   * Entry point for both prompt fields. Without a key it opens settings
+   * instead, otherwise the conversation shows in the chat panel, where every
+   * follow up happens.
+   */
+  submit(text) {
+    if (!this.ready) {
+      this.settingsOpen = true
+      return false
+    }
+    const clean = String(text || '').trim()
+    if (!clean || this.busy) return false
+    ui.openPanel('chat')
+    this.send(clean)
+    return true
+  }
+
+  /** Messages of a model opened from the library. */
+  load(messages = []) {
+    this.abort()
+    this.messages = messages
+    this.error = ''
+  }
+
+  /**
    * Sends a prompt, runs whatever script comes back, and if the script throws
    * gives the model one chance to fix its own error before giving up.
    */
@@ -172,11 +197,6 @@ class AiStore extends Store {
     model.setCode(fixedCode)
     this.messages = [...this.messages, { role: 'assistant', content: fixedCode, at: Date.now() }]
     if (await model.run()) emit('fit-view')
-  }
-
-  clear() {
-    this.messages = []
-    this.error = ''
   }
 }
 

@@ -117,6 +117,21 @@ class ModelStore extends Store {
     }
   }
 
+  /**
+   * Swaps in a saved model from the library. Undo history belongs to the
+   * model that was open, so it goes.
+   */
+  load({ code, features = [], params = {}, name = 'model' }) {
+    this.history = []
+    this.future = []
+    this.name = name
+    this.features = features
+    this.params = params
+    this.persistFeatures()
+    this.setCode(code, { remember: false })
+    return this.run({ keepParams: true })
+  }
+
   setParam(name, value) {
     this.params = { ...this.params, [name]: value }
     this.run({ keepParams: true })

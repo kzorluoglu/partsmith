@@ -1,17 +1,20 @@
 import { Component } from '@geajs/core'
 import ai from '../stores/ai-store.js'
-import ui from '../stores/ui-store.js'
 import model from '../stores/model-store.js'
 import { on } from '../lib/bus.js'
 
-/** Floating prompt at the bottom centre. Enter sends, Shift+Enter breaks. */
+/**
+ * Floating prompt at the bottom centre, for the first description of a new
+ * model. Once a conversation exists it steps aside and every follow up goes
+ * through the chat panel. Enter sends, Shift+Enter breaks.
+ */
 export default class PromptBar extends Component {
   inputEl = null
 
   template() {
-    const { streaming, busy, ready } = ai
+    const { streaming, busy, ready, messages } = ai
     return (
-      <form class="promptbar" submit={this.submit}>
+      <form class={`promptbar ${messages.length ? 'docked' : ''}`} submit={this.submit}>
         <span class="ico i-spark promptbar-mark"></span>
         <textarea
           ref={this.inputEl}
@@ -45,17 +48,9 @@ export default class PromptBar extends Component {
 
   submit = (event) => {
     event.preventDefault()
-    if (!ai.ready) {
-      ai.settingsOpen = true
-      return
-    }
-    const text = this.inputEl.value.trim()
-    if (!text) return
+    if (!ai.submit(this.inputEl.value)) return
     this.inputEl.value = ''
     this.autosize()
-    // Show the conversation so the streaming script is visible.
-    ui.openPanel('chat')
-    ai.send(text)
   }
 
   onAfterRender() {
