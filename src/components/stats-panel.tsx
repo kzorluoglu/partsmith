@@ -85,6 +85,7 @@ export default class StatsPanel extends Component {
 
         <div class="export-row">
           <button class="button" disabled={!stats} click={() => model.download('stl')}>STL</button>
+          <button class="button ghost" disabled={!stats} click={() => model.download('stl', true)}>STL parts</button>
           <button class="button ghost" disabled={!stats} click={() => model.download('3mf')}>3MF</button>
           <button class="button ghost" click={() => model.downloadScript()}>script</button>
         </div>

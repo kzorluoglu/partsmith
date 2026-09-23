@@ -64,4 +64,4 @@ export const runScript = (code, params, { timeout = 20000, autoPlace = true, fea
       .finally(() => clearTimeout(timer))
   })
 
-export const exportModel = (format) => send('export', { format })
+export const exportModel = (format, separate = false) => send('export', { format, separate })

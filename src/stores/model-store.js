@@ -238,12 +238,25 @@ class ModelStore extends Store {
     return ok
   }
 
-  async download(format) {
+  async download(format, separate = false) {
     if (!this.stats) return
     try {
-      const { parts, mimeType, extension } = await exportModel(format)
-      const size = saveFile(parts, `${slugify(this.name)}.${extension}`, mimeType)
-      this.exportInfo = `Saved ${slugify(this.name)}.${extension} (${formatBytes(size)})`
+      const result = await exportModel(format, separate)
+      const base = slugify(this.name)
+      if (separate) {
+        const files = result.files || []
+        let total = 0
+        for (const file of files) {
+          total += saveFile(file.parts, `${base}-part-${String(file.index).padStart(2, '0')}.${file.extension}`, file.mimeType)
+        }
+        this.exportInfo = files.length
+          ? `Saved ${files.length} separate ${format.toUpperCase()} parts (${formatBytes(total)})`
+          : 'No separate parts found'
+        return
+      }
+      const { parts, mimeType, extension } = result
+      const size = saveFile(parts, `${base}.${extension}`, mimeType)
+      this.exportInfo = `Saved ${base}.${extension} (${formatBytes(size)})`
     } catch (error) {
       this.error = error.message
     }

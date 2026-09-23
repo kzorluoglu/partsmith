@@ -371,8 +371,28 @@ const run = ({ code, params, autoPlace = true, features = [] }) => {
   }
 }
 
-const exportModel = ({ format }) => {
+const exportModel = ({ format, separate = false }) => {
   if (!current) throw new Error('nothing to export, run the script first')
+  if (separate) {
+    return {
+      files: current.solids.map((solid, index) => {
+        if (format === '3mf') {
+          return {
+            index: index + 1,
+            parts: threeMfSerializer.serialize({ unit: 'millimeter' }, [solid]),
+            mimeType: 'model/3mf',
+            extension: '3mf'
+          }
+        }
+        return {
+          index: index + 1,
+          parts: stlSerializer.serialize({ binary: format !== 'stl-ascii' }, [solid]),
+          mimeType: 'model/stl',
+          extension: 'stl'
+        }
+      })
+    }
+  }
   if (format === '3mf') {
     const parts = threeMfSerializer.serialize({ unit: 'millimeter' }, current.solids)
     return { parts, mimeType: 'model/3mf', extension: '3mf' }

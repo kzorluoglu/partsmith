@@ -26,7 +26,9 @@ export default class ProjectBar extends Component {
           </button>
           <div class={`export-menu ${ui.exportOpen ? 'open' : ''}`}>
             <button class="menu-item" click={() => this.download('stl')}>STL <span class="menu-hint">binary, any slicer</span></button>
+            <button class="menu-item" click={() => this.download('stl', true)}>STL parts <span class="menu-hint">one file per solid</span></button>
             <button class="menu-item" click={() => this.download('3mf')}>3MF <span class="menu-hint">Bambu, Prusa, Orca</span></button>
+            <button class="menu-item" click={() => this.download('3mf', true)}>3MF parts <span class="menu-hint">one file per solid</span></button>
             <button class="menu-item" click={() => this.script()}>Script <span class="menu-hint">.jscad.js source</span></button>
           </div>
         </div>
@@ -38,9 +40,9 @@ export default class ProjectBar extends Component {
     )
   }
 
-  download(format) {
+  download(format, separate = false) {
     ui.exportOpen = false
-    model.download(format)
+    model.download(format, separate)
   }
 
   script() {
