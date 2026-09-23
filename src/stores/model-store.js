@@ -6,6 +6,7 @@ import { STARTER } from '../lib/examples.js'
 import { bakeFeatures } from '../lib/features.js'
 import { emit } from '../lib/bus.js'
 import settings from './settings-store.js'
+import parts from './parts-store.js'
 
 const CODE_STORAGE = 'partsmith.code'
 const FEATURES_STORAGE = 'partsmith.features'
@@ -153,6 +154,7 @@ class ModelStore extends Store {
       this.params = result.paramValues
       this.stats = result.stats
       this.planes = result.planes
+      parts.sync(result.parts)
       this.warnings = printWarnings(result.stats, settings.printer)
       emit('geometry', {
         positions: result.positions,
@@ -160,6 +162,7 @@ class ModelStore extends Store {
         planeIds: result.planeIds,
         planes: result.planes,
         edgePositions: result.edgePositions,
+        parts: result.parts,
         stats: result.stats
       })
       return true

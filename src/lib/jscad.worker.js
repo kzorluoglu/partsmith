@@ -85,7 +85,19 @@ const collectSolids = (value) => {
  * bounding box, volume, manifoldness and unsupported overhang area.
  */
 const tessellate = (solids) => {
-  const polygons = solids.flatMap((solid) => geometries.geom3.toPolygons(solid))
+  // Polygons stay grouped by solid, so the viewer can show, hide and move
+  // every part of a multi part model on its own.
+  const polygons = []
+  const polygonPart = []
+  solids.forEach((solid, part) => {
+    for (const poly of geometries.geom3.toPolygons(solid)) {
+      polygons.push(poly)
+      polygonPart.push(part)
+    }
+  })
+  const partTris = solids.map(() => ({ start: 0, count: 0 }))
+  const partMin = solids.map(() => [Infinity, Infinity, Infinity])
+  const partMax = solids.map(() => [-Infinity, -Infinity, -Infinity])
 
   let triangleCount = 0
   for (const poly of polygons) triangleCount += Math.max(0, poly.vertices.length - 2)
@@ -134,8 +146,11 @@ const tessellate = (solids) => {
   const downFaces = []
   let tri = 0
 
-  for (const poly of polygons) {
-    const verts = poly.vertices
+  for (let p = 0; p < polygons.length; p++) {
+    const verts = polygons[p].vertices
+    const part = polygonPart[p]
+    if (partTris[part].count === 0) partTris[part].start = tri
+    partTris[part].count += Math.max(0, verts.length - 2)
     const a = verts[0]
     for (let i = 1; i < verts.length - 1; i++) {
       const b = verts[i]
@@ -188,7 +203,7 @@ const tessellate = (solids) => {
           const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`
           const seen = edgeUse.get(key)
           if (seen === undefined) {
-            edgeUse.set(key, { planeId, uses: 1, p: corners[e], q: corners[(e + 1) % 3] })
+            edgeUse.set(key, { planeId, part, uses: 1, p: corners[e], q: corners[(e + 1) % 3] })
           } else {
             seen.uses++
             if (seen.planeId !== planeId) {
@@ -213,6 +228,8 @@ const tessellate = (solids) => {
         for (let d = 0; d < 3; d++) {
           if (v[d] < min[d]) min[d] = v[d]
           if (v[d] > max[d]) max[d] = v[d]
+          if (v[d] < partMin[part][d]) partMin[part][d] = v[d]
+          if (v[d] > partMax[part][d]) partMax[part][d] = v[d]
         }
       }
     }
@@ -247,15 +264,36 @@ const tessellate = (solids) => {
     }
   }
 
+  // Edges are written part by part, each part then owns one contiguous run.
   let edgePositions = new Float32Array(0)
+  const partEdges = solids.map(() => ({ start: 0, count: 0 }))
   if (collectEdges) {
-    const out = []
+    const perPart = solids.map(() => [])
     for (const [, edge] of edgeUse) {
       if (edge.uses !== 2 || !edge.sharp) continue
-      out.push(edge.p[0], edge.p[1], edge.p[2], edge.q[0], edge.q[1], edge.q[2])
+      perPart[edge.part].push(edge.p[0], edge.p[1], edge.p[2], edge.q[0], edge.q[1], edge.q[2])
     }
-    edgePositions = new Float32Array(out)
+    let offset = 0
+    perPart.forEach((list, part) => {
+      partEdges[part] = { start: offset / 6, count: list.length / 6 }
+      offset += list.length
+    })
+    edgePositions = new Float32Array(perPart.flat())
   }
+
+  const parts = solids.map((_, part) => {
+    const lo = partMin[part]
+    const hi = partMax[part]
+    const empty = partTris[part].count === 0
+    return {
+      triStart: partTris[part].start,
+      triCount: partTris[part].count,
+      edgeStart: partEdges[part].start,
+      edgeCount: partEdges[part].count,
+      min: empty ? [0, 0, 0] : lo,
+      max: empty ? [0, 0, 0] : hi
+    }
+  })
 
   for (const plane of planes) {
     if (plane.area > 0) {
@@ -272,6 +310,7 @@ const tessellate = (solids) => {
     planeIds,
     planes,
     edgePositions,
+    parts,
     stats: {
       empty,
       triangles: triangleCount,
@@ -365,6 +404,7 @@ const run = ({ code, params, autoPlace = true, features = [] }) => {
     planeIds: mesh.planeIds,
     planes: mesh.planes,
     edgePositions: mesh.edgePositions,
+    parts: mesh.parts,
     stats: { ...mesh.stats, duration: Math.round(performance.now() - started) },
     paramDefs: defs,
     paramValues: values

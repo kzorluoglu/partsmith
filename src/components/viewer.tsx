@@ -5,9 +5,11 @@ import ViewCube from './view-cube.tsx'
 import ViewTools from './view-tools.tsx'
 import SketchHud from './sketch-hud.tsx'
 import SectionControl from './section-control.tsx'
+import PartsPanel from './parts-panel.tsx'
 import { on } from '../lib/bus.js'
 import settings from '../stores/settings-store.js'
 import model from '../stores/model-store.js'
+import parts from '../stores/parts-store.js'
 
 /** Hosts the WebGL canvas and the overlays drawn on top of it. */
 export default class Viewer extends Component {
@@ -47,6 +49,7 @@ export default class Viewer extends Component {
 
         <SketchHud />
         <SectionControl />
+        <PartsPanel />
 
         <div class="statusbar">
           {stats && <span class="stat">{stats.size[0].toFixed(1)} × {stats.size[1].toFixed(1)} × {stats.size[2].toFixed(1)} mm</span>}
@@ -74,6 +77,7 @@ export default class Viewer extends Component {
 
       this.offGeometry = on('geometry', (payload) => {
         setGeometry(payload, { shading: settings.shading, showWireframe: settings.showWireframe })
+        parts.apply()
         if (payload && this.firstFrame) {
           frameModel(payload.stats)
           this.firstFrame = false

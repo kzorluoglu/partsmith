@@ -17,6 +17,7 @@
 import * as S from './scene.js'
 import store from '../stores/sketch-store.js'
 import model from '../stores/model-store.js'
+import parts from '../stores/parts-store.js'
 import { on } from './bus.js'
 import {
   snap, snapPoint, segmentLength, segmentAngle, pointAt, fromPlane,
@@ -67,6 +68,9 @@ export const init = (layerEl) => {
 
 export const setTool = (tool) => {
   reset()
+  // Sketching and measuring work in model coordinates, so an exploded view
+  // goes back together first.
+  if (tool && parts.changed) parts.reset()
   store.tool = tool
   S.setCursor(tool ? 'crosshair' : '')
   hint()

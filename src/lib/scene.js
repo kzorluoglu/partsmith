@@ -11,7 +11,10 @@ import { planeBasis, toPlane } from './features.js'
 let renderer, scene, camera, controls
 let perspCamera, orthoCamera
 let orthographic = false
-let modelGroup, meshMaterial, mesh, wireframe
+let modelGroup, meshMaterial, wireMaterial
+// One entry per solid: { group, mesh, wireframe, cap, triStart }. The group
+// carries the part's display offset, the geometry stays in model coordinates.
+let parts = []
 let plate, grid, volumeBox, axes
 let gridUniforms = null
 const cameraListeners = new Set()
@@ -351,20 +354,22 @@ export const onCameraChange = (fn) => {
   return () => cameraListeners.delete(fn)
 }
 
-/** Replaces the displayed mesh with new triangle soup from the worker. */
+/** Replaces the displayed parts with new triangle soup from the worker. */
 export const setGeometry = (payload, { shading = 'studio', showWireframe = true } = {}) => {
-  disposeObject(mesh)
-  disposeObject(wireframe)
-  mesh = null
-  wireframe = null
-  applySection()   // drops the cap, it shares the geometry just disposed
+  for (const part of parts) {
+    part.mesh.geometry.dispose()
+    part.wireframe.geometry.dispose()
+    part.cap?.parent?.remove(part.cap)
+    modelGroup.remove(part.group)
+  }
+  parts = []
+  meshMaterial?.dispose()
+  wireMaterial?.dispose()
+  meshMaterial = null
+  wireMaterial = null
+  applySection()   // drops the caps, they share the geometry just disposed
   dirty = true
   if (!payload) return
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(payload.positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(payload.normals, 3))
-  geometry.computeBoundingSphere()
 
   meshData = { positions: payload.positions, planeIds: payload.planeIds, planes: payload.planes, edges: payload.edgePositions, snaps: null }
   // Face ids from the previous build mean nothing now.
@@ -372,22 +377,60 @@ export const setGeometry = (payload, { shading = 'studio', showWireframe = true 
   highlightFace(null, 'active')
 
   meshMaterial = makeMaterial(shading)
-  mesh = new THREE.Mesh(geometry, meshMaterial)
-  modelGroup.add(mesh)
+  wireMaterial = new THREE.LineBasicMaterial({ color: 0x14161b, transparent: true, opacity: 0.85 })
 
-  // Edges come precomputed from the worker, see the note there on why
-  // EdgesGeometry draws phantom lines across boolean results.
-  const edgeGeometry = new THREE.BufferGeometry()
-  edgeGeometry.setAttribute('position', new THREE.BufferAttribute(
-    payload.edgePositions?.length ? payload.edgePositions : new Float32Array(0), 3
-  ))
-  wireframe = new THREE.LineSegments(
-    edgeGeometry,
-    new THREE.LineBasicMaterial({ color: 0x14161b, transparent: true, opacity: 0.85 })
-  )
-  wireframe.visible = showWireframe
-  modelGroup.add(wireframe)
+  // Older payloads without part data are one part covering everything.
+  const triangles = payload.positions.length / 9
+  const edges = payload.edgePositions?.length ? payload.edgePositions : new Float32Array(0)
+  const ranges = payload.parts?.length
+    ? payload.parts
+    : [{ triStart: 0, triCount: triangles, edgeStart: 0, edgeCount: edges.length / 6 }]
+
+  for (const range of ranges) {
+    // subarray views share the worker's buffers, nothing is copied.
+    const from = range.triStart * 9
+    const to = from + range.triCount * 9
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(payload.positions.subarray(from, to), 3))
+    geometry.setAttribute('normal', new THREE.BufferAttribute(payload.normals.subarray(from, to), 3))
+    geometry.computeBoundingSphere()
+    const mesh = new THREE.Mesh(geometry, meshMaterial)
+    mesh.userData.triStart = range.triStart
+
+    // Edges come precomputed from the worker, see the note there on why
+    // EdgesGeometry draws phantom lines across boolean results.
+    const edgeGeometry = new THREE.BufferGeometry()
+    edgeGeometry.setAttribute('position', new THREE.BufferAttribute(
+      edges.subarray(range.edgeStart * 6, (range.edgeStart + range.edgeCount) * 6), 3
+    ))
+    const wireframe = new THREE.LineSegments(edgeGeometry, wireMaterial)
+    wireframe.visible = showWireframe
+
+    const group = new THREE.Group()
+    group.add(mesh, wireframe)
+    modelGroup.add(group)
+    parts.push({ group, mesh, wireframe, cap: null, triStart: range.triStart })
+  }
   applySection()
+}
+
+/** Number of separately displayed parts. */
+export const partCount = () => parts.length
+
+/** Shows or hides one part. Hidden parts are not picked either. */
+export const setPartVisible = (index, visible) => {
+  const part = parts[index]
+  if (!part) return
+  part.group.visible = visible
+  dirty = true
+}
+
+/** Moves one part for display only, the model and every export stay put. */
+export const setPartOffset = (index, [x, y, z]) => {
+  const part = parts[index]
+  if (!part) return
+  part.group.position.set(x, y, z)
+  dirty = true
 }
 
 /* ---- interaction primitives -----------------------------------------
@@ -478,13 +521,15 @@ const updatePointer = (event) => {
 
 /** Model surface under the pointer, with the planar face it belongs to. */
 export const pickModel = (event) => {
-  if (!mesh) return null
+  const meshes = parts.filter((part) => part.group.visible).map((part) => part.mesh)
+  if (meshes.length === 0) return null
   updatePointer(event)
-  const hit = raycaster.intersectObject(mesh, false)[0]
+  const hit = raycaster.intersectObjects(meshes, false)[0]
   if (!hit) return null
-  const planeId = meshData.planeIds[hit.faceIndex]
+  const face = hit.object.userData.triStart + hit.faceIndex
+  const planeId = meshData.planeIds[face]
   const p = meshData.positions
-  const t = hit.faceIndex * 9
+  const t = face * 9
   return {
     point: hit.point.toArray(),
     planeId,
@@ -688,7 +733,7 @@ export const hitsObject = (event, object) => {
 
 const sectionPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)
 let sectionState = { enabled: false, axis: 'z', position: 0 }
-let sectionCap = null
+let capMaterial = null
 
 const AXIS = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }
 
@@ -697,17 +742,21 @@ const applySection = () => {
   if (!renderer || software) return
   const planes = sectionState.enabled ? [sectionPlane] : []
   renderer.localClippingEnabled = sectionState.enabled
-  if (mesh) { mesh.material.clippingPlanes = planes; mesh.material.needsUpdate = true }
-  if (wireframe) { wireframe.material.clippingPlanes = planes; wireframe.material.needsUpdate = true }
-  if (sectionCap) { sectionCap.material.dispose(); sectionCap.parent?.remove(sectionCap) }
-  sectionCap = null
-  if (sectionState.enabled && mesh) {
+  if (meshMaterial) { meshMaterial.clippingPlanes = planes; meshMaterial.needsUpdate = true }
+  if (wireMaterial) { wireMaterial.clippingPlanes = planes; wireMaterial.needsUpdate = true }
+  for (const part of parts) { part.cap?.parent?.remove(part.cap); part.cap = null }
+  capMaterial?.dispose()
+  capMaterial = null
+  if (sectionState.enabled && parts.length) {
     // The inside of a solid is its back faces. Drawn flat in a cut colour
     // they read as a solid section surface without computing a real cap.
-    sectionCap = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial({
+    capMaterial = new THREE.MeshBasicMaterial({
       color: 0x6f7fa3, side: THREE.BackSide, clippingPlanes: planes, toneMapped: false
-    }))
-    modelGroup.add(sectionCap)
+    })
+    for (const part of parts) {
+      part.cap = new THREE.Mesh(part.mesh.geometry, capMaterial)
+      part.group.add(part.cap)
+    }
   }
   dirty = true
 }
@@ -726,9 +775,10 @@ export const setOverlayVisible = (visible) => {
 }
 
 export const setShading = (shading) => {
-  if (!mesh) return
-  mesh.material.dispose()
-  mesh.material = makeMaterial(shading)
+  if (!meshMaterial) return
+  meshMaterial.dispose()
+  meshMaterial = makeMaterial(shading)
+  for (const part of parts) part.mesh.material = meshMaterial
   applySection()
   dirty = true
 }
@@ -738,7 +788,7 @@ export const setVisibility = ({ showGrid, showBuildVolume, showWireframe, showAx
   if (plate) plate.visible = showBuildVolume
   if (volumeBox) volumeBox.visible = showBuildVolume
   if (axes) axes.visible = showAxes
-  if (wireframe) wireframe.visible = showWireframe
+  for (const part of parts) part.wireframe.visible = showWireframe
   dirty = true
 }
 

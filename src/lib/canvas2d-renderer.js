@@ -78,8 +78,8 @@ export class Canvas2DRenderer {
 
     const queue = []
 
-    scene.traverse((object) => {
-      if (!object.visible) return
+    // traverseVisible also skips the children of a hidden group, e.g. a hidden part.
+    scene.traverseVisible((object) => {
       if (object.isMesh && !object.material?.isShaderMaterial) this.collectMesh(object, camera, w, h, queue)
       else if (object.isLineSegments || object.isLine) this.collectLines(object, camera, w, h, queue)
     })
