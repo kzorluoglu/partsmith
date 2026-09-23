@@ -80,12 +80,18 @@ export class Canvas2DRenderer {
 
     // traverseVisible also skips the children of a hidden group, e.g. a hidden part.
     scene.traverseVisible((object) => {
+      if (object.material?.visible === false) return
+      const start = queue.length
       if (object.isMesh && !object.material?.isShaderMaterial) this.collectMesh(object, camera, w, h, queue)
       else if (object.isLineSegments || object.isLine) this.collectLines(object, camera, w, h, queue)
+      // Things drawn without depth test (handles, gizmos) belong on top.
+      const layer = object.material?.depthTest === false ? 1 + (object.renderOrder || 0) : 0
+      for (let i = start; i < queue.length; i++) queue[i].layer = layer
     })
 
-    // Painter's algorithm: no depth buffer, so draw far things first.
-    queue.sort((p, q) => q.depth - p.depth)
+    // Painter's algorithm: no depth buffer, so draw far things first, and
+    // the on top layers after everything else.
+    queue.sort((p, q) => (p.layer - q.layer) || (q.depth - p.depth))
 
     for (const item of queue) {
       if (item.kind === 'tri') {

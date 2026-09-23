@@ -15,6 +15,10 @@ let modelGroup, meshMaterial, wireMaterial
 // One entry per solid: { group, mesh, wireframe, cap, triStart }. The group
 // carries the part's display offset, the geometry stays in model coordinates.
 let parts = []
+let edgesOn = true
+let selectMaterial = null
+let selectedPart = -1
+let gizmo = null             // axis arrows, a child of the selected part's group
 let plate, grid, volumeBox, axes
 let gridUniforms = null
 const cameraListeners = new Set()
@@ -199,8 +203,11 @@ const syncOrtho = (aspect) => {
 
 const resize = (canvas) => {
   const host = canvas.parentElement || canvas
-  const width = host.clientWidth || 1
-  const height = host.clientHeight || 1
+  // A tab opened in the background lays out at 0 × 0. Sizing to that would
+  // leave a 1 px canvas behind, so wait for the observer to report real size.
+  if (!host.clientWidth || !host.clientHeight) return
+  const width = host.clientWidth
+  const height = host.clientHeight
   renderer.setSize(width, height, false)
   perspCamera.aspect = width / height
   perspCamera.updateProjectionMatrix()
@@ -363,6 +370,10 @@ export const setGeometry = (payload, { shading = 'studio', showWireframe = true 
     modelGroup.remove(part.group)
   }
   parts = []
+  if (gizmo) disposeTree(gizmo)
+  gizmo = null
+  selectedPart = -1
+  edgesOn = showWireframe
   meshMaterial?.dispose()
   wireMaterial?.dispose()
   meshMaterial = null
@@ -409,13 +420,14 @@ export const setGeometry = (payload, { shading = 'studio', showWireframe = true 
     const group = new THREE.Group()
     group.add(mesh, wireframe)
     modelGroup.add(group)
-    parts.push({ group, mesh, wireframe, cap: null, triStart: range.triStart })
+    geometry.computeBoundingBox()
+    const center = geometry.boundingBox.isEmpty()
+      ? new THREE.Vector3()
+      : geometry.boundingBox.getCenter(new THREE.Vector3())
+    parts.push({ group, mesh, wireframe, cap: null, triStart: range.triStart, center })
   }
   applySection()
 }
-
-/** Number of separately displayed parts. */
-export const partCount = () => parts.length
 
 /** Shows or hides one part. Hidden parts are not picked either. */
 export const setPartVisible = (index, visible) => {
@@ -431,6 +443,94 @@ export const setPartOffset = (index, [x, y, z]) => {
   if (!part) return
   part.group.position.set(x, y, z)
   dirty = true
+}
+
+/** Index of the visible part under the pointer, or -1. */
+export const pickPart = (event) => {
+  const meshes = parts.filter((part) => part.group.visible).map((part) => part.mesh)
+  if (meshes.length === 0) return -1
+  updatePointer(event)
+  const hit = raycaster.intersectObjects(meshes, false)[0]
+  return hit ? parts.findIndex((part) => part.mesh === hit.object) : -1
+}
+
+/** Centre of a part's bounding box in world space, offset included. */
+export const partCenter = (index) => {
+  const part = parts[index]
+  return part ? part.center.clone().add(part.group.position).toArray() : null
+}
+
+const GIZMO_AXES = [
+  { axis: 'x', dir: [1, 0, 0], color: 0xe5484d },
+  { axis: 'y', dir: [0, 1, 0], color: 0x46a758 },
+  { axis: 'z', dir: [0, 0, 1], color: 0x3e63dd }
+]
+const GIZMO_HOVER = 0xffd166
+
+/**
+ * Marks one part as selected: its edges turn accent blue and the three axis
+ * arrows grow out of its centre. -1 clears the selection.
+ */
+export const selectPart = (index) => {
+  if (selectedPart !== index) {
+    const old = parts[selectedPart]
+    if (old) { old.wireframe.material = wireMaterial; old.wireframe.visible = edgesOn }
+    selectedPart = parts[index] ? index : -1
+    const now = parts[selectedPart]
+    if (now) {
+      selectMaterial ??= new THREE.LineBasicMaterial({ color: 0x6ea8ff, toneMapped: false })
+      selectMaterial.clippingPlanes = wireMaterial?.clippingPlanes || []
+      now.wireframe.material = selectMaterial
+      now.wireframe.visible = true
+    }
+  }
+  refreshGizmo()
+}
+
+/** Rebuilds the arrows, they are sized in pixels and must follow the zoom. */
+export const refreshGizmo = () => {
+  const hover = gizmo?.userData.hover ?? null
+  if (gizmo) { disposeTree(gizmo); gizmo = null }
+  const part = parts[selectedPart]
+  if (part) {
+    const world = part.center.clone().add(part.group.position).toArray()
+    // A bit larger than the extrude arrow, these are grabbed all the time.
+    const scale = mmPerPixel(world) * 1.4
+    gizmo = new THREE.Group()
+    gizmo.name = 'part-gizmo'
+    for (const { axis, dir, color } of GIZMO_AXES) {
+      const arrow = makeArrow(part.center.toArray(), dir, { color, scale })
+      arrow.userData.axis = axis
+      arrow.userData.color = color
+      gizmo.add(arrow)
+    }
+    part.group.add(gizmo)
+    // Picking may run before the next frame, so the matrices must be current now.
+    gizmo.updateMatrixWorld(true)
+    hoverGizmo(hover)
+  }
+  dirty = true
+}
+
+/** Lights up the arrow under the pointer, null for none. */
+export const hoverGizmo = (axis) => {
+  if (!gizmo) return
+  gizmo.userData.hover = axis
+  for (const arrow of gizmo.children) {
+    const color = arrow.userData.axis === axis ? GIZMO_HOVER : arrow.userData.color
+    arrow.traverse((o) => { if (o.material?.visible !== false) o.material?.color?.set(color) })
+  }
+  dirty = true
+}
+
+/** Which gizmo arrow is under the pointer: 'x', 'y', 'z' or null. */
+export const gizmoAxisAt = (event) => {
+  if (!gizmo) return null
+  updatePointer(event)
+  const hit = raycaster.intersectObjects(gizmo.children, true)[0]
+  let o = hit?.object
+  while (o && !o.userData.axis) o = o.parent
+  return o?.userData.axis ?? null
 }
 
 /* ---- interaction primitives -----------------------------------------
@@ -699,8 +799,7 @@ export const makeExtrudePreview = (outline, plane, depth, { color } = {}) => {
  * invisible cylinder so it is easy to grab. Sized in screen pixels so it looks
  * the same at any zoom.
  */
-export const makeArrow = (origin, normal, { color = 0x3b82f6 } = {}) => {
-  const scale = mmPerPixel(origin)
+export const makeArrow = (origin, normal, { color = 0x3b82f6, scale = mmPerPixel(origin) } = {}) => {
   const len = 64 * scale
   const group = new THREE.Group()
   const mat = new THREE.MeshBasicMaterial({ color, toneMapped: false, depthTest: false })
@@ -744,6 +843,7 @@ const applySection = () => {
   renderer.localClippingEnabled = sectionState.enabled
   if (meshMaterial) { meshMaterial.clippingPlanes = planes; meshMaterial.needsUpdate = true }
   if (wireMaterial) { wireMaterial.clippingPlanes = planes; wireMaterial.needsUpdate = true }
+  if (selectMaterial) { selectMaterial.clippingPlanes = planes; selectMaterial.needsUpdate = true }
   for (const part of parts) { part.cap?.parent?.remove(part.cap); part.cap = null }
   capMaterial?.dispose()
   capMaterial = null
@@ -788,7 +888,8 @@ export const setVisibility = ({ showGrid, showBuildVolume, showWireframe, showAx
   if (plate) plate.visible = showBuildVolume
   if (volumeBox) volumeBox.visible = showBuildVolume
   if (axes) axes.visible = showAxes
-  for (const part of parts) part.wireframe.visible = showWireframe
+  edgesOn = showWireframe
+  parts.forEach((part, i) => { part.wireframe.visible = showWireframe || i === selectedPart })
   dirty = true
 }
 

@@ -70,7 +70,10 @@ export const setTool = (tool) => {
   reset()
   // Sketching and measuring work in model coordinates, so an exploded view
   // goes back together first.
-  if (tool && parts.changed) parts.reset()
+  if (tool) {
+    parts.select(-1)
+    if (parts.changed) parts.reset()
+  }
   store.tool = tool
   S.setCursor(tool ? 'crosshair' : '')
   hint()

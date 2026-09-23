@@ -1,11 +1,12 @@
 import { Component } from '@geajs/core'
 import { initScene, setGeometry, setVisibility, setShading, buildPlate, frameModel, destroyScene, isSoftware, setProjection, setOverlayVisible } from '../lib/scene.js'
 import * as sketcher from '../lib/sketcher.js'
+import * as partMover from '../lib/part-mover.js'
 import ViewCube from './view-cube.tsx'
 import ViewTools from './view-tools.tsx'
 import SketchHud from './sketch-hud.tsx'
 import SectionControl from './section-control.tsx'
-import PartsPanel from './parts-panel.tsx'
+import PartHud from './part-hud.tsx'
 import { on } from '../lib/bus.js'
 import settings from '../stores/settings-store.js'
 import model from '../stores/model-store.js'
@@ -49,7 +50,7 @@ export default class Viewer extends Component {
 
         <SketchHud />
         <SectionControl />
-        <PartsPanel />
+        <PartHud />
 
         <div class="statusbar">
           {stats && <span class="stat">{stats.size[0].toFixed(1)} × {stats.size[1].toFixed(1)} × {stats.size[2].toFixed(1)} mm</span>}
@@ -88,6 +89,7 @@ export default class Viewer extends Component {
       setOverlayVisible(settings.showSketch)
 
       sketcher.init(this.pillLayer)
+      partMover.init()
 
       this.offFit = on('fit-view', () => frameModel(model.stats))
 

@@ -2,7 +2,6 @@ import { Component } from '@geajs/core'
 import ui from '../stores/ui-store.js'
 import model from '../stores/model-store.js'
 import sketch from '../stores/sketch-store.js'
-import parts from '../stores/parts-store.js'
 import * as sketcher from '../lib/sketcher.js'
 import RailItem from './rail-item.tsx'
 
@@ -58,7 +57,6 @@ export default class Rail extends Component {
 
         <div class="rail-group rail-lower">
           <RailItem label="Section View" sub={sectionOn ? 'On' : 'Off'} icon="i-section" active={sectionOn} onPress={() => this.toggleSection()} />
-          <RailItem label="Parts" sub={parts.count === 1 ? '1 part' : `${parts.count} parts`} icon="i-layers" active={parts.open} onPress={() => parts.toggle()} />
           <RailItem label="Measure" sub={tool === 'measure' ? 'On' : 'Off'} icon="i-measure" active={tool === 'measure'} onPress={() => this.toggleMeasure()} />
         </div>
 
